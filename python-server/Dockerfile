@@ -14,6 +14,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application code
 COPY . .
 
+# Create non-root user — UID must be 10000-20000 for Choreo
+RUN groupadd -g 10001 appgroup && \
+    useradd -u 10001 -g appgroup -m appuser && \
+    chown -R appuser:appgroup /app
+
+USER 10001
+
 # Expose the token HTTP server port (as defined in CLAUDE.md)
 EXPOSE 8006
 
