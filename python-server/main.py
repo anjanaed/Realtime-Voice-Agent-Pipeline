@@ -2,24 +2,19 @@ import asyncio
 import json
 import logging
 import os
-import threading
 
-from aiohttp import web
-import aiohttp_cors
 from dotenv import load_dotenv
 
-from livekit import api, rtc
+from livekit import rtc
 from livekit import agents
 from livekit.agents import (
     Agent,
     AgentSession,
     JobContext,
-    TurnHandlingOptions,
     WorkerOptions,
     WorkerType,
 )
 from livekit.plugins import silero, deepgram, cartesia
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from ballerina_llm import BallerinaLLM
 
@@ -29,15 +24,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 logging.getLogger("livekit").setLevel(logging.INFO)
 logging.getLogger("livekit.agents").setLevel(logging.INFO)
 logging.getLogger("livekit.plugins").setLevel(logging.INFO)
-for noisy in (
-    "websockets",
-    "httpx",
-    "httpcore",
-    "aiohttp",
-    "openai",
-    "urllib3",
-    "asyncio",
-):
+for noisy in ("websockets", "httpx", "httpcore", "aiohttp", "openai", "urllib3", "asyncio"):
     logging.getLogger(noisy).setLevel(logging.WARNING)
 
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
@@ -48,41 +35,6 @@ LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
 LLM_SERVICE_URL = os.getenv("LLM_SERVICE_URL", "ws://localhost:8003/llm")
 CARTESIA_API_KEY = os.getenv("CARTESIA_2")
 LIVEKIT_ROOM = os.getenv("LIVEKIT_ROOM", "voice-room")
-
-
-
-async def handle_token(request):
-    room_name = request.query.get("roomName") or LIVEKIT_ROOM
-    participant_name = request.query.get("participantName", "user")
-
-    if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET or not LIVEKIT_URL:
-        return web.json_response({"error": "Missing LiveKit credentials"}, status=500)
-
-    token = api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET) \
-        .with_identity(participant_name) \
-        .with_name(participant_name) \
-        .with_grants(api.VideoGrants(
-            room_join=True,
-            room=room_name,
-            can_publish=True,
-            can_subscribe=True,
-            can_publish_data=True,
-        ))
-
-    lkapi = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
-    try:
-        await lkapi.agent_dispatch.create_dispatch(
-            api.CreateAgentDispatchRequest(room=room_name, agent_name="voice-agent")
-        )
-        print(f"[TokenServer] Dispatched agent to room: {room_name}")
-    except Exception as e:
-        print(f"[TokenServer] Agent dispatch warning: {e}")
-    finally:
-        await lkapi.aclose()
-
-    return web.json_response({"token": token.to_jwt(), "url": LIVEKIT_URL})
-
-
 
 
 async def _publish(room: rtc.Room, msg_type: str, text: str):
@@ -141,19 +93,16 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         stt=deepgram.STT(api_key=DEEPGRAM_API_KEY, model="nova-3", language="en"),
         llm=ballerina_llm,
-      tts=cartesia.TTS(
-         api_key=CARTESIA_API_KEY,
-      model="sonic-3",
-      voice="2c239000-fbd8-4430-83e6-b43a835ef62c",
-   ),
+        tts=cartesia.TTS(
+            api_key=CARTESIA_API_KEY,
+            model="sonic-3",
+            voice="2c239000-fbd8-4430-83e6-b43a835ef62c",
+        ),
         vad=silero.VAD.load(
             activation_threshold=0.5,
             min_speech_duration=0.8,
             min_silence_duration=0.5,
             prefix_padding_duration=0.4,
-        ),
-        turn_handling=TurnHandlingOptions(
-            turn_detection=MultilingualModel()
         ),
     )
     wire_events(session, room)
@@ -183,7 +132,7 @@ if __name__ == "__main__":
             entrypoint_fnc=entrypoint,
             worker_type=WorkerType.ROOM,
             agent_name="voice-agent",
-            num_idle_processes=1,
+            num_idle_processes=0,
             load_threshold=1.0,
             drain_timeout=1800,
         )
