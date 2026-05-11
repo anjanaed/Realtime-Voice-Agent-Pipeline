@@ -1,0 +1,4 @@
+# OpenAI API Configuration
+# Replace with your actual OpenAI API key
+openaiToken = "sk-your-openai-api-key-here"
+serperApiKey = "your-serper-api-key-here"   # free at serper.dev
