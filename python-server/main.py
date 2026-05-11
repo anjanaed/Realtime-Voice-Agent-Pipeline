@@ -83,34 +83,6 @@ async def handle_token(request):
     return web.json_response({"token": token.to_jwt(), "url": LIVEKIT_URL})
 
 
-async def run_token_server():
-    app = web.Application()
-    cors = aiohttp_cors.setup(app, defaults={
-        "*": aiohttp_cors.ResourceOptions(
-            allow_credentials=True, expose_headers="*", allow_headers="*"
-        )
-    })
-    cors.add(app.router.add_get("/getToken", handle_token))
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 8006)
-    await site.start()
-    print("[TokenServer] Listening on http://0.0.0.0:8006")
-
-
-def start_token_server_in_thread():
-    """Run the aiohttp token server in its own thread + event loop so it
-    starts at worker boot (the agents CLI takes over the main loop)."""
-    def _run():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(run_token_server())
-        loop.run_forever()
-
-    t = threading.Thread(target=_run, daemon=True, name="token-server")
-    t.start()
-
 
 
 async def _publish(room: rtc.Room, msg_type: str, text: str):
@@ -206,7 +178,6 @@ async def entrypoint(ctx: JobContext):
 
 
 if __name__ == "__main__":
-    start_token_server_in_thread()
     agents.cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
