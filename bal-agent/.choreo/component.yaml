@@ -1,0 +1,7 @@
+schemaVersion: 1.0
+endpoints:
+  - name: llm-ws
+    port: 8003
+    type: WS
+    networkVisibility: Public
+    context: /llm
