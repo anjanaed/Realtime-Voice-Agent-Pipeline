@@ -1,7 +1,18 @@
+import os
+
+# ── Disable LiveKit cloud telemetry (must be before all livekit imports) ──
+from opentelemetry.sdk.trace import TracerProvider
+from livekit.agents.telemetry import set_tracer_provider
+set_tracer_provider(TracerProvider())  # no-op: no processors, no exports
+
+import livekit.agents.telemetry.traces as _lk_traces
+async def _noop(*args, **kwargs): pass
+_lk_traces._upload_session_report = _noop  # patch out 504 session report upload
+# ─────────────────────────────────────────────────────────────────────────
+
 import asyncio
 import json
 import logging
-import os
 
 from dotenv import load_dotenv
 
@@ -17,12 +28,6 @@ from livekit.agents import (
 from livekit.plugins import silero, deepgram, cartesia
 
 from ballerina_llm import BallerinaLLM
-from opentelemetry.sdk.trace import TracerProvider
-from livekit.agents.telemetry import set_tracer_provider
-
-# Override LiveKit's default cloud telemetry with a no-op provider
-# No processors = no exporters = no network calls to livekit.cloud
-set_tracer_provider(TracerProvider())
 
 load_dotenv()
 
@@ -128,6 +133,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(
         room=room,
         agent=Agent(instructions="You are Jarvis, a WSO2 expert voice assistant. Response generation is handled by the Ballerina LLM backend."),
+        record=False,  # disable session recording upload to LiveKit Cloud
     )
     print("\n✓ Agent ready\n")
 
@@ -138,7 +144,7 @@ if __name__ == "__main__":
             entrypoint_fnc=entrypoint,
             worker_type=WorkerType.ROOM,
             agent_name="voice-agent",
-            num_idle_processes=0,
+            num_idle_processes=1,   # pre-warm one process — eliminates 20s cold start
             load_threshold=1.0,
             drain_timeout=1800,
         )
