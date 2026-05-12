@@ -133,7 +133,6 @@ async def entrypoint(ctx: JobContext):
     await session.start(
         room=room,
         agent=Agent(instructions="You are Jarvis, a WSO2 expert voice assistant. Response generation is handled by the Ballerina LLM backend."),
-        record=False,  # disable session recording upload to LiveKit Cloud
     )
     print("\n✓ Agent ready\n")
 
