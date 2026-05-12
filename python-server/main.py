@@ -17,6 +17,12 @@ from livekit.agents import (
 from livekit.plugins import silero, deepgram, cartesia
 
 from ballerina_llm import BallerinaLLM
+from opentelemetry.sdk.trace import TracerProvider
+from livekit.agents.telemetry import set_tracer_provider
+
+# Override LiveKit's default cloud telemetry with a no-op provider
+# No processors = no exporters = no network calls to livekit.cloud
+set_tracer_provider(TracerProvider())
 
 load_dotenv()
 
