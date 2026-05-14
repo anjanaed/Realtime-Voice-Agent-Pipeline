@@ -48,6 +48,10 @@ LIVEKIT_URL      = os.getenv("LIVEKIT_URL")
 LIVEKIT_API_KEY  = os.getenv("LIVEKIT_API_KEY")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "ODq5zmih8GrVes37Dizd")
+ELEVENLABS_STT_LANGUAGE = os.getenv("ELEVENLABS_STT_LANGUAGE", "en")
+ELEVENLABS_STT_MODEL_ID = os.getenv("ELEVENLABS_STT_MODEL_ID", "scribe_v2_realtime")
+ELEVENLABS_TTS_MODEL = os.getenv("ELEVENLABS_TTS_MODEL", "eleven_turbo_v2_5")
 LLM_SERVICE_URL  = os.getenv("LLM_SERVICE_URL", "ws://localhost:8003/llm")
 CARTESIA_API_KEY = os.getenv("CARTESIA_2")
 LIVEKIT_ROOM     = os.getenv("LIVEKIT_ROOM", "voice-room")
@@ -149,6 +153,9 @@ async def entrypoint(ctx: JobContext):
     if not OPENAI_API_KEY:
         print("ERROR: OPENAI_API_KEY not set")
         return
+    if not ELEVENLABS_API_KEY:
+        print("ERROR: ELEVENLABS_API_KEY not set")
+        return
 
     print("─" * 50)
     print("  Voice Agent (AgentSession worker)")
@@ -187,9 +194,15 @@ async def entrypoint(ctx: JobContext):
         )
 
     session = AgentSession(
-        stt=elevenlabs.STT(api_key=ELEVENLABS_API_KEY),
+        stt=elevenlabs.STT(
+            api_key=ELEVENLABS_API_KEY,
+            language_code=ELEVENLABS_STT_LANGUAGE,
+            model_id=ELEVENLABS_STT_MODEL_ID,
+        ),
         llm=ballerina_llm,
-        tts=elevenlabs.TTS(api_key=ELEVENLABS_API_KEY),
+        tts=cartesia.TTS(
+            api_key=CARTESIA_API_KEY,
+        ),
         vad=silero.VAD.load(
             activation_threshold=0.5,
             min_speech_duration=0.8,
