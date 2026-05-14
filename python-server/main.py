@@ -1,14 +1,13 @@
 import os
 
-# ── Disable LiveKit cloud telemetry (must be before all livekit imports) ──
+
 from opentelemetry.sdk.trace import TracerProvider
 from livekit.agents.telemetry import set_tracer_provider
-set_tracer_provider(TracerProvider())  # no-op: no processors, no exports
+set_tracer_provider(TracerProvider())  
 
 import livekit.agents.telemetry.traces as _lk_traces
 async def _noop(*args, **kwargs): pass
-_lk_traces._upload_session_report = _noop  # patch out 504 session report upload
-# ─────────────────────────────────────────────────────────────────────────
+_lk_traces._upload_session_report = _noop 
 
 import asyncio
 import json
@@ -197,10 +196,8 @@ async def entrypoint(ctx: JobContext):
             prefix_padding_duration=0.4,
         ),
 
-        # ── Turn detection & interruptions ────────────────────────
-        turn_detection=MultilingualModel(),
-
         turn_handling=TurnHandlingOptions(
+            turn_detection=MultilingualModel(),
             allow_interruptions=True,
             min_interruption_duration=0.5,
             min_interruption_words=1,
