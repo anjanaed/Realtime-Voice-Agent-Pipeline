@@ -26,7 +26,7 @@ from livekit.agents import (
     WorkerType,
     TurnHandlingOptions,
 )
-from livekit.plugins import silero, deepgram, cartesia
+from livekit.plugins import silero, deepgram, cartesia, elevenlabs
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from ballerina_llm import BallerinaLLM
@@ -186,9 +186,9 @@ async def entrypoint(ctx: JobContext):
         )
 
     session = AgentSession(
-        stt=deepgram.STT(api_key=DEEPGRAM_API_KEY, model="nova-3", language="en"),
+        stt=elevenlabs.STT(api_key=ELEVENLABS_API_KEY),
         llm=ballerina_llm,
-        tts=deepgram.TTS(api_key=DEEPGRAM_API_KEY),
+        tts=elevenlabs.TTS(api_key=ELEVENLABS_API_KEY),
         vad=silero.VAD.load(
             activation_threshold=0.5,
             min_speech_duration=0.8,
