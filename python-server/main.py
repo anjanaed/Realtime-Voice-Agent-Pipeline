@@ -22,8 +22,10 @@ from livekit.agents import (
     JobContext,
     WorkerOptions,
     WorkerType,
+    TurnHandlingOptions,
 )
-from livekit.plugins import deepgram, cartesia, elevenlabs
+from livekit.plugins import silero, deepgram, cartesia, elevenlabs
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from ballerina_llm import BallerinaLLM
 
@@ -115,21 +117,32 @@ async def entrypoint(ctx: JobContext):
     loop = asyncio.get_running_loop()
     latency_state = {"turn": 0}
 
-    # Initialize your custom LLM
     ballerina_llm = BallerinaLLM(
         url=LLM_SERVICE_URL,
         on_response=lambda text: loop.create_task(_publish(room, "assistant", text)),
     )
 
     session = AgentSession(
-        stt=elevenlabs.STT(
-            api_key=ELEVENLABS_API_KEY,
-            language_code=ELEVENLABS_STT_LANGUAGE,
-            model_id=ELEVENLABS_STT_MODEL_ID,
-        ),
+        stt=deepgram.STT(api_key=DEEPGRAM_API_KEY, model="nova-3", language="en"),
         llm=ballerina_llm,
-        tts=cartesia.TTS(
-            api_key=CARTESIA_API_KEY,
+        tts=deepgram.TTS(
+            api_key=DEEPGRAM_API_KEY,
+            model="aura-2-asteria-en"
+        ),
+        vad=silero.VAD.load(
+            activation_threshold=0.5,
+            min_speech_duration=0.8,
+            min_silence_duration=0.5,
+            prefix_padding_duration=0.4,
+        ),
+        turn_handling=TurnHandlingOptions(
+            turn_detection=MultilingualModel(),
+            allow_interruptions=True,
+            endpointing={
+                "mode": "dynamic",
+                "min_delay": 0.2,
+                "max_delay": 2.0,
+            },
         ),
     )
 
