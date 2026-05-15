@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
+import time
 import uuid
 from typing import Any, Callable
 
@@ -19,6 +21,7 @@ from livekit.agents.types import (
 
 
 _SENTENCE_RE = re.compile(r'(?<=[.!?])\s+(?=[A-Z"\'])')
+LATENCY_LOG = logging.getLogger("latency")
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -26,6 +29,13 @@ def _split_sentences(text: str) -> list[str]:
     if not text:
         return []
     return [p.strip() for p in _SENTENCE_RE.split(text) if p.strip()]
+
+
+def _preview_text(text: str, limit: int = 120) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[:limit] + "..."
 
 
 class BallerinaLLM(llm.LLM):
@@ -114,6 +124,13 @@ class BallerinaLLMStream(llm.LLMStream):
         if not user_text:
             return
 
+        send_start = time.perf_counter()
+        LATENCY_LOG.info(
+            "[LLM] send -> ballerina (chars=%d, text=%s)",
+            len(user_text),
+            _preview_text(user_text),
+        )
+
         ws = await self._ballerina._acquire_ws()
 
         try:
@@ -133,6 +150,13 @@ class BallerinaLLMStream(llm.LLMStream):
                 elif raw.startswith("ERROR:"):
                     raise APIConnectionError(raw[len("ERROR:"):])
 
+            elapsed_ms = (time.perf_counter() - send_start) * 1000.0
+            LATENCY_LOG.info(
+                "[LLM] recv <- ballerina (chars=%d, ms=%.1f)",
+                len(full_content),
+                elapsed_ms,
+            )
+
             # Publish full text to UI immediately — before TTS starts
             if self._ballerina._on_response and full_content:
                 self._ballerina._on_response(full_content)
@@ -144,6 +168,9 @@ class BallerinaLLMStream(llm.LLMStream):
             # fallback: if regex found no boundaries, emit the whole response
             if queue.empty() and full_content.strip():
                 queue.put_nowait(full_content.strip())
+
+            if not queue.empty():
+                LATENCY_LOG.info("[LLM] emit -> TTS (sentences=%d)", queue.qsize())
 
             while not queue.empty():
                 sentence = queue.get_nowait()

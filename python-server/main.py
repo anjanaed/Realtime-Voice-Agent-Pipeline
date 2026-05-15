@@ -1,138 +1,179 @@
-import os
 import asyncio
 import json
 import logging
-import time
-from datetime import datetime
+import os
+import threading
+
+from aiohttp import web
+import aiohttp_cors
 from dotenv import load_dotenv
 
-from opentelemetry.sdk.trace import TracerProvider
-from livekit.agents.telemetry import set_tracer_provider
-set_tracer_provider(TracerProvider())  
-
-import livekit.agents.telemetry.traces as _lk_traces
-async def _noop(*args, **kwargs): pass
-_lk_traces._upload_session_report = _noop 
-
-from livekit import rtc
+from livekit import api, rtc
 from livekit import agents
 from livekit.agents import (
     Agent,
     AgentSession,
     JobContext,
+    TurnHandlingOptions,
     WorkerOptions,
     WorkerType,
-    TurnHandlingOptions,
 )
-from livekit.plugins import silero, deepgram, cartesia, elevenlabs
+from livekit.plugins import silero, deepgram, cartesia
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from ballerina_llm import BallerinaLLM
 
 load_dotenv()
 
-# Formatting for the specific tracking logs
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-TRACKING_LOG = logging.getLogger("TRACKING")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+logging.getLogger("livekit").setLevel(logging.INFO)
+logging.getLogger("livekit.agents").setLevel(logging.INFO)
+logging.getLogger("livekit.plugins").setLevel(logging.INFO)
+for noisy in (
+    "websockets",
+    "httpx",
+    "httpcore",
+    "aiohttp",
+    "openai",
+    "urllib3",
+    "asyncio",
+):
+    logging.getLogger(noisy).setLevel(logging.WARNING)
 
-def log_tracking(msg: str):
-    """Utility to print the specific TRACKING logs you requested."""
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    print(f"TRACKING [{timestamp}] {msg}")
-
-# --- Environment Variables ---
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
-OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
-LIVEKIT_URL      = os.getenv("LIVEKIT_URL")
-LIVEKIT_API_KEY  = os.getenv("LIVEKIT_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+LIVEKIT_URL = os.getenv("LIVEKIT_URL")
+LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+LLM_SERVICE_URL = os.getenv("LLM_SERVICE_URL", "ws://localhost:8003/llm")
 CARTESIA_API_KEY = os.getenv("CARTESIA_2")
-LLM_SERVICE_URL  = os.getenv("LLM_SERVICE_URL", "ws://localhost:8003/llm")
-ELEVENLABS_STT_LANGUAGE = os.getenv("ELEVENLABS_STT_LANGUAGE", "en")
-ELEVENLABS_STT_MODEL_ID = os.getenv("ELEVENLABS_STT_MODEL_ID", "scribe_v2_realtime")
+LIVEKIT_ROOM = os.getenv("LIVEKIT_ROOM", "voice-room")
 
-def _now_ms() -> float:
-    return time.perf_counter() * 1000.0
+
+
+async def handle_token(request):
+    room_name = request.query.get("roomName") or LIVEKIT_ROOM
+    participant_name = request.query.get("participantName", "user")
+
+    if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET or not LIVEKIT_URL:
+        return web.json_response({"error": "Missing LiveKit credentials"}, status=500)
+
+    token = api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET) \
+        .with_identity(participant_name) \
+        .with_name(participant_name) \
+        .with_grants(api.VideoGrants(
+            room_join=True,
+            room=room_name,
+            can_publish=True,
+            can_subscribe=True,
+            can_publish_data=True,
+        ))
+
+    lkapi = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
+    try:
+        await lkapi.agent_dispatch.create_dispatch(
+            api.CreateAgentDispatchRequest(room=room_name, agent_name="voice-agent")
+        )
+        print(f"[TokenServer] Dispatched agent to room: {room_name}")
+    except Exception as e:
+        print(f"[TokenServer] Agent dispatch warning: {e}")
+    finally:
+        await lkapi.aclose()
+
+    return web.json_response({"token": token.to_jwt(), "url": LIVEKIT_URL})
+
+
+async def run_token_server():
+    app = web.Application()
+    cors = aiohttp_cors.setup(app, defaults={
+        "*": aiohttp_cors.ResourceOptions(
+            allow_credentials=True, expose_headers="*", allow_headers="*"
+        )
+    })
+    cors.add(app.router.add_get("/getToken", handle_token))
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 8006)
+    await site.start()
+    print("[TokenServer] Listening on http://0.0.0.0:8006")
+
+
+def start_token_server_in_thread():
+    """Run the aiohttp token server in its own thread + event loop so it
+    starts at worker boot (the agents CLI takes over the main loop)."""
+    def _run():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(run_token_server())
+        loop.run_forever()
+
+    t = threading.Thread(target=_run, daemon=True, name="token-server")
+    t.start()
+
+
 
 async def _publish(room: rtc.Room, msg_type: str, text: str):
     payload = json.dumps({"type": msg_type, "text": text}).encode("utf-8")
     try:
-        await room.local_participant.publish_data(payload, reliable=True, topic="voice-text")
+        await room.local_participant.publish_data(
+            payload, reliable=True, topic="voice-text"
+        )
     except Exception as e:
-        pass
+        print(f"[Data] publish failed: {e}")
 
-def wire_events(
-    session: AgentSession,
-    room: rtc.Room,
-    latency_state: dict,
-):
+
+def wire_events(session: AgentSession, room: rtc.Room):
     loop = asyncio.get_running_loop()
 
-    @session.on("user_speech_committed")
-    def _on_speech_committed(ev):
-        # 1. Time it first detects voice / 2. Hits VAD
-        log_tracking("Voice Stream Detected & VAD Committed")
-
     @session.on("user_input_transcribed")
-    def _on_user_transcribed(ev):
+    def _on_user(ev):
         if not getattr(ev, "is_final", False):
             return
-        
         transcript = (getattr(ev, "transcript", "") or "").strip()
         if not transcript:
             return
-
-        # 3. Time it went to STT (implicitly just before this) 
-        # 4. Time it came back from STT as text
-        log_tracking(f"STT Completed (Result: '{transcript[:30]}...')")
-        
-        # 5. Time it goes to LLM
-        log_tracking("Forwarding transcript to LLM")
+        print(f"[STT] {transcript}")
         loop.create_task(_publish(room, "stt", transcript))
 
-    @session.on("llm_first_token")
-    def _on_llm_first_token(ev):
-        # 6. Time it comes from LLM (first response chunk)
-        log_tracking("LLM Response Started (First Token Received)")
+    @session.on("agent_state_changed")
+    def _on_state(ev):
+        new_state = getattr(ev, "new_state", None)
+        old_state = getattr(ev, "old_state", None)
+        if new_state == "listening" and old_state == "speaking":
+            loop.create_task(_publish(room, "interrupt", ""))
 
-    @session.on("speech_created")
-    def _on_speech_created(ev):
-        # 7. Time it goes to TTS
-        log_tracking("Text sent to TTS Engine")
-
-    # Hooking into the TTS plugin specifically for completion
-    @session.tts.on("metrics_collected")
-    def _on_tts_metrics(ev):
-        # 8. Time it came back from TTS
-        ttfb = getattr(ev, "ttfb", 0) * 1000.0
-        log_tracking(f"TTS Audio Generation Completed (TTFB: {ttfb:.2f}ms)")
 
 async def entrypoint(ctx: JobContext):
+    if not OPENAI_API_KEY:
+        print("ERROR: OPENAI_API_KEY not set")
+        return
+
+    print("─" * 50)
+    print("  Voice Agent (AgentSession worker)")
+    print(f"  LLM: {LLM_SERVICE_URL}")
+    print("─" * 50)
+
     await ctx.connect()
     room = ctx.room
-    print(f"[LiveKit] Connected to {room.name}")
+    print(f"[LiveKit] Connected — room: {room.name}, waiting for participant...")
     await ctx.wait_for_participant()
+    print("[LiveKit] Participant joined")
 
     loop = asyncio.get_running_loop()
-    latency_state = {"turn": 0}
-
-    # Initialize your custom LLM
     ballerina_llm = BallerinaLLM(
         url=LLM_SERVICE_URL,
         on_response=lambda text: loop.create_task(_publish(room, "assistant", text)),
     )
 
     session = AgentSession(
-        stt=elevenlabs.STT(
-            api_key=ELEVENLABS_API_KEY,
-            language_code=ELEVENLABS_STT_LANGUAGE,
-            model_id=ELEVENLABS_STT_MODEL_ID,
-        ),
+        stt=deepgram.STT(api_key=DEEPGRAM_API_KEY, model="nova-3", language="en"),
         llm=ballerina_llm,
-        tts=cartesia.TTS(
-            api_key=CARTESIA_API_KEY,
-        ),
+      tts=cartesia.TTS(
+         api_key=CARTESIA_API_KEY,
+      model="sonic-3",
+      voice="2c239000-fbd8-4430-83e6-b43a835ef62c",
+   ),
         vad=silero.VAD.load(
             activation_threshold=0.5,
             min_speech_duration=0.8,
@@ -140,40 +181,29 @@ async def entrypoint(ctx: JobContext):
             prefix_padding_duration=0.4,
         ),
         turn_handling=TurnHandlingOptions(
-            turn_detection=MultilingualModel(),
-            allow_interruptions=True,
-            endpointing={
-                "mode": "dynamic",
-                "min_delay": 0.2,
-                "max_delay": 2.0,
-            },
+            turn_detection=MultilingualModel()
         ),
     )
-
-    wire_events(session, room, latency_state)
-
-    # Audio playback tracking
-    async def _attach_audio_output_hooks():
-        while session.output.audio is None:
-            await asyncio.sleep(0.05)
-        
-        @session.output.audio.on("playback_started")
-        def _on_playback_started(ev):
-            log_tracking("TTS Playback started (Audio hitting speakers)")
-
-    loop.create_task(_attach_audio_output_hooks())
+    wire_events(session, room)
 
     async def _on_shutdown():
-        await session.aclose()
-        await ballerina_llm.aclose()
+        try:
+            await session.aclose()
+        except Exception:
+            pass
+        try:
+            await ballerina_llm.aclose()
+        except Exception:
+            pass
 
     ctx.add_shutdown_callback(_on_shutdown)
 
     await session.start(
         room=room,
-        agent=Agent(instructions="You are Jarvis, a WSO2 expert voice assistant."),
+        agent=Agent(instructions="You are Jarvis, a WSO2 expert voice assistant. Response generation is handled by the Ballerina LLM backend."),
     )
-    print("\n✓ Agent ready and tracking...\n")
+    print("\n✓ Agent ready\n")
+
 
 if __name__ == "__main__":
     agents.cli.run_app(
@@ -181,5 +211,8 @@ if __name__ == "__main__":
             entrypoint_fnc=entrypoint,
             worker_type=WorkerType.ROOM,
             agent_name="voice-agent",
+            num_idle_processes=1,
+            load_threshold=1.0,
+            drain_timeout=1800,
         )
     )

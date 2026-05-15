@@ -20,6 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application code
 COPY . .
 
+# Container entrypoint
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
 # Create non-root user
 RUN groupadd -g 10001 appgroup && \
     useradd -u 10001 -g appgroup -m appuser
@@ -37,5 +41,5 @@ USER 10001
 # Note: Ensure your code uses port 8006 or 8081 as discussed earlier
 EXPOSE 8006
 
-# Run the python server
-CMD ["python", "main.py", "start", "--log-level", "INFO"]
+# Run the python server + token server
+CMD ["/app/start.sh"]
