@@ -24,8 +24,7 @@ from livekit.agents import (
     WorkerType,
     TurnHandlingOptions,
 )
-from livekit.plugins import silero, deepgram, cartesia, elevenlabs
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.plugins import deepgram
 
 from ballerina_llm import BallerinaLLM
 
