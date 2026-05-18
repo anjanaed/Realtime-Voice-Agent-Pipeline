@@ -69,6 +69,14 @@ def wire_events(
 ):
     loop = asyncio.get_running_loop()
 
+    @session.on("user_started_speaking")
+    def _on_start(ev):
+        log_tracking("VAD: User started speaking detected")
+
+    @session.on("user_stopped_speaking")
+    def _on_stop(ev):
+        log_tracking("VAD: User stopped speaking detected (Turn Closed)")
+
     @session.on("user_speech_committed")
     def _on_speech_committed(ev):
         # 1. Time it first detects voice / 2. Hits VAD
