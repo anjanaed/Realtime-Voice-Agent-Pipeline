@@ -11,6 +11,7 @@ WORKDIR /app
 # Install system dependencies (required for some audio/onnx plugins)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    iptables \
     && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
@@ -35,7 +36,8 @@ RUN python3 main.py download-files
 # Fix permissions for the app directory AND the home directory (where models live)
 RUN chown -R appuser:appgroup /app /home/appuser
 
-USER 10001
+# Keep the container running as root so the startup script can install
+# transparent proxy rules before launching the app processes.
 
 # Expose the correct port
 # Note: Ensure your code uses port 8006 or 8081 as discussed earlier

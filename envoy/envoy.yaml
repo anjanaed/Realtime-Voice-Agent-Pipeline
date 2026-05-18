@@ -1,0 +1,61 @@
+static_resources:
+  listeners:
+  - name: listener_transparent_egress_tcp
+    address:
+      socket_address:
+        address: 0.0.0.0        # ← was 127.0.0.1; must bind all interfaces
+        port_value: 15001        #   to catch iptables-redirected traffic
+    traffic_direction: OUTBOUND
+    listener_filters:
+    - name: envoy.filters.listener.original_dst
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.listener.original_dst.v3.OriginalDst
+    per_connection_buffer_limit_bytes: 1048576
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: egress_http
+          route_config:
+            name: egress_route
+            virtual_hosts:
+            - name: backend
+              domains: ["*"]
+              routes:
+              - match:
+                  prefix: "/"
+                route:
+                  cluster: original_dst_cluster
+          http_filters:
+          - name: envoy.filters.http.buffer
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
+              max_request_bytes: 1048576
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+          access_log:
+          - name: envoy.access_loggers.stdout
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+              log_format:
+                text_format: "[egress] %START_TIME% %DOWNSTREAM_LOCAL_ADDRESS% -> %UPSTREAM_HOST% %BYTES_SENT% %BYTES_RECEIVED% %RESPONSE_FLAGS% %DURATION%ms\n"
+
+  clusters:
+  - name: original_dst_cluster
+    connect_timeout: 30s         # ← was 5s; too short for cloud TLS handshake
+    lb_policy: CLUSTER_PROVIDED
+    type: ORIGINAL_DST
+    dns_lookup_family: V4_ONLY   # ← add: avoids IPv6 fallback delays
+    upstream_connection_options:  # ← add: keeps long-lived LiveKit WS alive
+      tcp_keepalive:
+        keepalive_probes: 3
+        keepalive_time: 30
+        keepalive_interval: 5
+
+admin:
+  address:                        # ← removed deprecated access_log_path
+    socket_address:
+      address: 127.0.0.1
+      port_value: 9901
