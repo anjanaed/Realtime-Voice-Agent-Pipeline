@@ -137,14 +137,7 @@ async def entrypoint(ctx: JobContext):
             api_key=DEEPGRAM_API_KEY,
             model="aura-2-asteria-en"
         ),
-        vad=silero.VAD.load(
-            activation_threshold=0.5,
-            min_speech_duration=0.8,
-            min_silence_duration=0.5,
-            prefix_padding_duration=0.4,
-        ),
         turn_handling=TurnHandlingOptions(
-            turn_detection=MultilingualModel(),
             allow_interruptions=True,
             endpointing={
                 "mode": "dynamic",
