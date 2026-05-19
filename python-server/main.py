@@ -8,11 +8,11 @@ from dotenv import load_dotenv
 
 from opentelemetry.sdk.trace import TracerProvider
 from livekit.agents.telemetry import set_tracer_provider
-set_tracer_provider(TracerProvider())  
+set_tracer_provider(TracerProvider())
 
 import livekit.agents.telemetry.traces as _lk_traces
 async def _noop(*args, **kwargs): pass
-_lk_traces._upload_session_report = _noop 
+_lk_traces._upload_session_report = _noop
 
 from livekit import rtc
 from livekit import agents
@@ -114,8 +114,6 @@ async def entrypoint(ctx: JobContext):
             api_key=DEEPGRAM_API_KEY,
             model="nova-3",
             language="en",
-            endpointing=200,        # Deepgram sends final result after 200ms of silence;
-                                    # without this the default can be several seconds
         ),
         llm=ballerina_llm,
         tts=deepgram.TTS(
@@ -124,25 +122,17 @@ async def entrypoint(ctx: JobContext):
         ),
         vad=silero.VAD.load(
             activation_threshold=0.5,
-            min_speech_duration=0.1,    # low so speaking state fires quickly
-            min_silence_duration=1.2,   # FIX: was 0.5 → 500ms silence split one utterance
-                                        # into 4 separate turns ("Good morning. Check." had
-                                        # natural pauses that kept triggering stop/start);
-                                        # 1.2s tolerates gaps between words and sentences
+            min_speech_duration=0.1,    
+            min_silence_duration=1.2,   
             prefix_padding_duration=0.3,
         ),
         turn_handling=TurnHandlingOptions(
-            turn_detection="vad",       # explicit; avoids auto-fallback ambiguity
+            turn_detection="vad",      
             allow_interruptions=True,
             endpointing={
                 "mode": "dynamic",
-                "min_delay": 0.2,       # FIX: last version wrongly renamed to
-                "max_delay": 0.8,       # "min_endpointing_delay"/"max_endpointing_delay" —
-                                        # those keys don't exist so they were silently ignored,
-                                        # endpointing fell back to a very long default and
-                                        # caused the 6+ second gap between speech end and
-                                        # STT result. Correct keys are min_delay/max_delay.
-                                        # Also halved max_delay: 2.0 → 0.8 for faster commits.
+                "min_delay": 0.2,       
+                "max_delay": 0.8,       
             },
         ),
     )
