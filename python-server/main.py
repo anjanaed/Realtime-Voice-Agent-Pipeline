@@ -30,84 +30,71 @@ from ballerina_llm import BallerinaLLM
 
 load_dotenv()
 
-# Formatting for the specific tracking logs
 logging.basicConfig(level=logging.INFO, format="%(message)s")
-TRACKING_LOG = logging.getLogger("TRACKING")
+
+# Shared state for delta timing between events
+_last_event_ts: float = 0.0
 
 def log_tracking(msg: str):
-    """Utility to print the specific TRACKING logs you requested."""
+    global _last_event_ts
+    now = time.perf_counter() * 1000.0
     timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    print(f"TRACKING [{timestamp}] {msg}")
+    delta = f"+{now - _last_event_ts:.0f}ms" if _last_event_ts else "start"
+    _last_event_ts = now
+    print(f"TRACKING [{timestamp}] ({delta}) {msg}")
 
 # --- Environment Variables ---
-DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
-OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
-LIVEKIT_URL      = os.getenv("LIVEKIT_URL")
-LIVEKIT_API_KEY  = os.getenv("LIVEKIT_API_KEY")
+DEEPGRAM_API_KEY   = os.getenv("DEEPGRAM_API_KEY")
+OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY")
+LIVEKIT_URL        = os.getenv("LIVEKIT_URL")
+LIVEKIT_API_KEY    = os.getenv("LIVEKIT_API_KEY")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
-CARTESIA_API_KEY = os.getenv("CARTESIA_2")
-LLM_SERVICE_URL  = os.getenv("LLM_SERVICE_URL", "ws://localhost:8003/llm")
+CARTESIA_API_KEY   = os.getenv("CARTESIA_2")
+LLM_SERVICE_URL    = os.getenv("LLM_SERVICE_URL", "ws://localhost:8003/llm")
 ELEVENLABS_STT_LANGUAGE = os.getenv("ELEVENLABS_STT_LANGUAGE", "en")
 ELEVENLABS_STT_MODEL_ID = os.getenv("ELEVENLABS_STT_MODEL_ID", "scribe_v2_realtime")
-
-def _now_ms() -> float:
-    return time.perf_counter() * 1000.0
 
 async def _publish(room: rtc.Room, msg_type: str, text: str):
     payload = json.dumps({"type": msg_type, "text": text}).encode("utf-8")
     try:
         await room.local_participant.publish_data(payload, reliable=True, topic="voice-text")
-    except Exception as e:
+    except Exception:
         pass
 
-def wire_events(
-    session: AgentSession,
-    room: rtc.Room,
-    latency_state: dict,
-):
+def wire_events(session: AgentSession, room: rtc.Room):
     loop = asyncio.get_running_loop()
 
     @session.on("user_state_changed")
     def _on_user_state_changed(ev):
         if ev.new_state == "speaking":
-            log_tracking("VAD: User started speaking detected")
+            log_tracking("VAD: User started speaking")
         elif ev.new_state == "listening" and ev.old_state == "speaking":
-            log_tracking("VAD: User stopped speaking detected (Turn Closed)")
+            log_tracking("VAD: User stopped speaking (turn closed)")
 
     @session.on("user_input_transcribed")
     def _on_user_transcribed(ev):
         if not getattr(ev, "is_final", False):
             return
-        
         transcript = (getattr(ev, "transcript", "") or "").strip()
         if not transcript:
             return
-
-        # 3. Time it went to STT (implicitly just before this) 
-        # 4. Time it came back from STT as text
-        log_tracking(f"STT Completed (Result: '{transcript[:30]}...')")
-        
-        # 5. Time it goes to LLM
-        log_tracking("Forwarding transcript to LLM")
+        log_tracking(f"STT final result: '{transcript[:50]}'")
+        log_tracking("Forwarding to LLM")
         loop.create_task(_publish(room, "stt", transcript))
 
     @session.on("llm_first_token")
     def _on_llm_first_token(ev):
-        # 6. Time it comes from LLM (first response chunk)
-        log_tracking("LLM Response Started (First Token Received)")
+        log_tracking("LLM first token received")
 
     @session.on("speech_created")
     def _on_speech_created(ev):
-        # 7. Time it goes to TTS
-        log_tracking("Text sent to TTS Engine")
+        log_tracking("Speech created → sending to TTS")
 
-    # Hooking into the TTS plugin specifically for completion
     @session.tts.on("metrics_collected")
     def _on_tts_metrics(ev):
-        # 8. Time it came back from TTS
         ttfb = getattr(ev, "ttfb", 0) * 1000.0
-        log_tracking(f"TTS Audio Generation Completed (TTFB: {ttfb:.2f}ms)")
+        log_tracking(f"TTS generation done (TTFB: {ttfb:.0f}ms)")
 
 async def entrypoint(ctx: JobContext):
     await ctx.connect()
@@ -116,7 +103,6 @@ async def entrypoint(ctx: JobContext):
     await ctx.wait_for_participant()
 
     loop = asyncio.get_running_loop()
-    latency_state = {"turn": 0}
 
     ballerina_llm = BallerinaLLM(
         url=LLM_SERVICE_URL,
@@ -124,41 +110,53 @@ async def entrypoint(ctx: JobContext):
     )
 
     session = AgentSession(
-        stt=deepgram.STT(api_key=DEEPGRAM_API_KEY, model="nova-3", language="en"),
+        stt=deepgram.STT(
+            api_key=DEEPGRAM_API_KEY,
+            model="nova-3",
+            language="en",
+            endpointing=200,        # Deepgram sends final result after 200ms of silence;
+                                    # without this the default can be several seconds
+        ),
         llm=ballerina_llm,
         tts=deepgram.TTS(
             api_key=DEEPGRAM_API_KEY,
-            model="aura-2-asteria-en"
+            model="aura-2-asteria-en",
         ),
         vad=silero.VAD.load(
             activation_threshold=0.5,
-            min_speech_duration=0.1,       # FIX 1: was 0.8 — VAD requires 800ms of continuous
-                                           # speech before firing, so short utterances never
-                                           # triggered user_state_changed → "speaking"
-            min_silence_duration=0.5,
-            prefix_padding_duration=0.4,
+            min_speech_duration=0.1,    # low so speaking state fires quickly
+            min_silence_duration=1.2,   # FIX: was 0.5 → 500ms silence split one utterance
+                                        # into 4 separate turns ("Good morning. Check." had
+                                        # natural pauses that kept triggering stop/start);
+                                        # 1.2s tolerates gaps between words and sentences
+            prefix_padding_duration=0.3,
         ),
         turn_handling=TurnHandlingOptions(
+            turn_detection="vad",       # explicit; avoids auto-fallback ambiguity
             allow_interruptions=True,
             endpointing={
                 "mode": "dynamic",
-                "min_endpointing_delay": 0.2,  # FIX 2: was "min_delay" — wrong key,
-                "max_endpointing_delay": 2.0,  # was "max_delay" — wrong key,
-                                               # silently misconfigured turn detection
+                "min_delay": 0.2,       # FIX: last version wrongly renamed to
+                "max_delay": 0.8,       # "min_endpointing_delay"/"max_endpointing_delay" —
+                                        # those keys don't exist so they were silently ignored,
+                                        # endpointing fell back to a very long default and
+                                        # caused the 6+ second gap between speech end and
+                                        # STT result. Correct keys are min_delay/max_delay.
+                                        # Also halved max_delay: 2.0 → 0.8 for faster commits.
             },
         ),
     )
 
-    wire_events(session, room, latency_state)
+    wire_events(session, room)
 
     # Audio playback tracking
     async def _attach_audio_output_hooks():
         while session.output.audio is None:
             await asyncio.sleep(0.05)
-        
+
         @session.output.audio.on("playback_started")
         def _on_playback_started(ev):
-            log_tracking("TTS Playback started (Audio hitting speakers)")
+            log_tracking("TTS playback started (audio hitting speakers)")
 
     loop.create_task(_attach_audio_output_hooks())
 
