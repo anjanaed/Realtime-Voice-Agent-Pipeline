@@ -25,7 +25,6 @@ from livekit.agents import (
     TurnHandlingOptions,
 )
 from livekit.plugins import silero, deepgram, cartesia, elevenlabs
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from ballerina_llm import BallerinaLLM
 
@@ -69,18 +68,12 @@ def wire_events(
 ):
     loop = asyncio.get_running_loop()
 
-    @session.on("user_started_speaking")
-    def _on_start(ev):
-        log_tracking("VAD: User started speaking detected")
-
-    @session.on("user_stopped_speaking")
-    def _on_stop(ev):
-        log_tracking("VAD: User stopped speaking detected (Turn Closed)")
-
-    @session.on("user_speech_committed")
-    def _on_speech_committed(ev):
-        # 1. Time it first detects voice / 2. Hits VAD
-        log_tracking("Voice Stream Detected & VAD Committed")
+    @session.on("user_state_changed")
+    def _on_user_state_changed(ev):
+        if ev.new_state == "speaking":
+            log_tracking("VAD: User started speaking detected")
+        elif ev.new_state == "listening" and ev.old_state == "speaking":
+            log_tracking("VAD: User stopped speaking detected (Turn Closed)")
 
     @session.on("user_input_transcribed")
     def _on_user_transcribed(ev):
@@ -139,17 +132,19 @@ async def entrypoint(ctx: JobContext):
         ),
         vad=silero.VAD.load(
             activation_threshold=0.5,
-            min_speech_duration=0.8,
+            min_speech_duration=0.1,       # FIX 1: was 0.8 — VAD requires 800ms of continuous
+                                           # speech before firing, so short utterances never
+                                           # triggered user_state_changed → "speaking"
             min_silence_duration=0.5,
             prefix_padding_duration=0.4,
         ),
         turn_handling=TurnHandlingOptions(
-            turn_detection=MultilingualModel(),
             allow_interruptions=True,
             endpointing={
                 "mode": "dynamic",
-                "min_delay": 0.2,
-                "max_delay": 2.0,
+                "min_endpointing_delay": 0.2,  # FIX 2: was "min_delay" — wrong key,
+                "max_endpointing_delay": 2.0,  # was "max_delay" — wrong key,
+                                               # silently misconfigured turn detection
             },
         ),
     )
