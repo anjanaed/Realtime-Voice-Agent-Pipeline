@@ -32,6 +32,9 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+logging.getLogger("livekit.agents").setLevel(logging.WARNING)
+logging.getLogger("livekit.rtc").setLevel(logging.WARNING)
+
 # Shared state for delta timing between events
 _last_event_ts: float = 0.0
 
