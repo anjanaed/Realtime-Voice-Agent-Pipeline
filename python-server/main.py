@@ -121,10 +121,10 @@ async def entrypoint(ctx: JobContext):
             model="aura-2-asteria-en",
         ),
         vad=silero.VAD.load(
-            activation_threshold=0.5,
+            activation_threshold=0.4,
             min_speech_duration=0.1,    
-            min_silence_duration=1.2,   
-            prefix_padding_duration=0.3,
+            min_silence_duration=0.3,   
+            prefix_padding_duration=0.2,
         ),
         turn_handling=TurnHandlingOptions(
             turn_detection="vad",      
@@ -132,7 +132,7 @@ async def entrypoint(ctx: JobContext):
             endpointing={
                 "mode": "dynamic",
                 "min_delay": 0.2,       
-                "max_delay": 0.8,       
+                "max_delay": 0.5,       
             },
         ),
     )
