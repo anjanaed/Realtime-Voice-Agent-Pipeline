@@ -96,6 +96,46 @@ def wire_events(session: AgentSession, room: rtc.Room):
         ttfb = getattr(ev, "ttfb", 0) * 1000.0
         log_tracking(f"TTS generation done (TTFB: {ttfb:.0f}ms)")
 
+    # ── NEW: per-stage pipeline metrics ──────────────────────────────────────
+    @session.on("metrics_collected")
+    def _on_metrics(ev):
+        m    = ev.metrics
+        kind = type(m).__name__
+
+        if "EOUMetrics" in kind:
+            eou_ms   = getattr(m, "end_of_utterance_delay", 0) * 1000
+            trans_ms = getattr(m, "transcription_delay", 0) * 1000
+            log_tracking(
+                f"[EOU]  endpointing_delay={eou_ms:.0f}ms  "
+                f"transcription_delay={trans_ms:.0f}ms"
+            )
+
+        elif "STTMetrics" in kind:
+            audio_dur = getattr(m, "audio_duration", 0)
+            duration  = getattr(m, "duration", 0)
+            log_tracking(
+                f"[STT]  audio_duration={audio_dur:.2f}s  "
+                f"processing_time={duration:.2f}s"
+            )
+
+        elif "LLMMetrics" in kind:
+            ttft_ms    = getattr(m, "ttft", 0) * 1000
+            tokens_in  = getattr(m, "prompt_tokens", "?")
+            tokens_out = getattr(m, "completion_tokens", "?")
+            log_tracking(
+                f"[LLM]  ttft={ttft_ms:.0f}ms  "
+                f"tokens_in={tokens_in}  tokens_out={tokens_out}"
+            )
+
+        elif "TTSMetrics" in kind:
+            ttfb_ms   = getattr(m, "ttfb", 0) * 1000
+            audio_dur = getattr(m, "audio_duration", 0)
+            log_tracking(
+                f"[TTS]  ttfb={ttfb_ms:.0f}ms  "
+                f"audio_duration={audio_dur:.2f}s"
+            )
+    # ─────────────────────────────────────────────────────────────────────────
+
 async def entrypoint(ctx: JobContext):
     await ctx.connect()
     room = ctx.room
