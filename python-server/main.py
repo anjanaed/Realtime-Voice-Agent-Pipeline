@@ -191,6 +191,10 @@ async def entrypoint(ctx: JobContext):
         def _on_playback_started(ev):
             log_tracking("TTS playback started (audio hitting speakers)")
 
+        @session.output.audio.on("playback_finished")
+        def _on_playback_finished(ev):
+            log_tracking("TTS playback completed (audio finished)")
+
     loop.create_task(_attach_audio_output_hooks())
 
     async def _on_shutdown():
