@@ -24,39 +24,15 @@ from livekit.agents import (
     WorkerType,
     TurnHandlingOptions,
 )
-from livekit.plugins import silero, deepgram, cartesia, elevenlabs
+from livekit.plugins import silero, deepgram
 
 from ballerina_llm import BallerinaLLM
 
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
-
 logging.getLogger("livekit.agents").setLevel(logging.WARNING)
 logging.getLogger("livekit.rtc").setLevel(logging.WARNING)
-
-# Shared state for delta timing between events
-_last_event_ts: float = 0.0
-
-def log_tracking(msg: str):
-    global _last_event_ts
-    now = time.perf_counter() * 1000.0
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    delta = f"+{now - _last_event_ts:.0f}ms" if _last_event_ts else "start"
-    _last_event_ts = now
-    print(f"TRACKING [{timestamp}] ({delta}) {msg}")
-
-# --- Environment Variables ---
-DEEPGRAM_API_KEY   = os.getenv("DEEPGRAM_API_KEY")
-OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY")
-LIVEKIT_URL        = os.getenv("LIVEKIT_URL")
-LIVEKIT_API_KEY    = os.getenv("LIVEKIT_API_KEY")
-LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
-CARTESIA_API_KEY   = os.getenv("CARTESIA_2")
-LLM_SERVICE_URL    = os.getenv("LLM_SERVICE_URL", "ws://localhost:8003/llm")
-ELEVENLABS_STT_LANGUAGE = os.getenv("ELEVENLABS_STT_LANGUAGE", "en")
-ELEVENLABS_STT_MODEL_ID = os.getenv("ELEVENLABS_STT_MODEL_ID", "scribe_v2_realtime")
 
 async def _publish(room: rtc.Room, msg_type: str, text: str):
     payload = json.dumps({"type": msg_type, "text": text}).encode("utf-8")
@@ -67,6 +43,17 @@ async def _publish(room: rtc.Room, msg_type: str, text: str):
 
 def wire_events(session: AgentSession, room: rtc.Room):
     loop = asyncio.get_running_loop()
+    
+    # Thread-safe local tracking counter
+    last_event_ts = time.perf_counter() * 1000.0
+
+    def log_tracking(msg: str):
+        nonlocal last_event_ts
+        now = time.perf_counter() * 1000.0
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        delta = f"+{now - last_event_ts:.0f}ms"
+        last_event_ts = now
+        print(f"TRACKING [{timestamp}] ({delta}) {msg}")
 
     @session.on("user_state_changed")
     def _on_user_state_changed(ev):
@@ -83,7 +70,6 @@ def wire_events(session: AgentSession, room: rtc.Room):
         if not transcript:
             return
         log_tracking(f"STT final result: '{transcript[:50]}'")
-        log_tracking("Forwarding to LLM")
         loop.create_task(_publish(room, "stt", transcript))
 
     @session.on("llm_first_token")
@@ -99,7 +85,6 @@ def wire_events(session: AgentSession, room: rtc.Room):
         ttfb = getattr(ev, "ttfb", 0) * 1000.0
         log_tracking(f"TTS generation done (TTFB: {ttfb:.0f}ms)")
 
-    # ── NEW: per-stage pipeline metrics ──────────────────────────────────────
     @session.on("metrics_collected")
     def _on_metrics(ev):
         m    = ev.metrics
@@ -108,36 +93,24 @@ def wire_events(session: AgentSession, room: rtc.Room):
         if "EOUMetrics" in kind:
             eou_ms   = getattr(m, "end_of_utterance_delay", 0) * 1000
             trans_ms = getattr(m, "transcription_delay", 0) * 1000
-            log_tracking(
-                f"[EOU]  endpointing_delay={eou_ms:.0f}ms  "
-                f"transcription_delay={trans_ms:.0f}ms"
-            )
+            log_tracking(f"[EOU]  endpointing_delay={eou_ms:.0f}ms  transcription_delay={trans_ms:.0f}ms")
 
         elif "STTMetrics" in kind:
             audio_dur = getattr(m, "audio_duration", 0)
             duration  = getattr(m, "duration", 0)
-            log_tracking(
-                f"[STT]  audio_duration={audio_dur:.2f}s  "
-                f"processing_time={duration:.2f}s"
-            )
+            log_tracking(f"[STT]  audio_duration={audio_dur:.2f}s  processing_time={duration:.2f}s")
 
         elif "LLMMetrics" in kind:
             ttft_ms    = getattr(m, "ttft", 0) * 1000
             tokens_in  = getattr(m, "prompt_tokens", "?")
             tokens_out = getattr(m, "completion_tokens", "?")
-            log_tracking(
-                f"[LLM]  ttft={ttft_ms:.0f}ms  "
-                f"tokens_in={tokens_in}  tokens_out={tokens_out}"
-            )
+            log_tracking(f"[LLM]  ttft={ttft_ms:.0f}ms  tokens_in={tokens_in}  tokens_out={tokens_out}")
 
         elif "TTSMetrics" in kind:
             ttfb_ms   = getattr(m, "ttfb", 0) * 1000
             audio_dur = getattr(m, "audio_duration", 0)
-            log_tracking(
-                f"[TTS]  ttfb={ttfb_ms:.0f}ms  "
-                f"audio_duration={audio_dur:.2f}s"
-            )
-    # ─────────────────────────────────────────────────────────────────────────
+            log_tracking(f"[TTS]  ttfb={ttfb_ms:.0f}ms  audio_duration={audio_dur:.2f}s")
+
 
 async def entrypoint(ctx: JobContext):
     await ctx.connect()
@@ -148,21 +121,14 @@ async def entrypoint(ctx: JobContext):
     loop = asyncio.get_running_loop()
 
     ballerina_llm = BallerinaLLM(
-        url=LLM_SERVICE_URL,
+        url=os.getenv("LLM_SERVICE_URL", "ws://localhost:8003/llm"),
         on_response=lambda text: loop.create_task(_publish(room, "assistant", text)),
     )
 
     session = AgentSession(
-        stt=deepgram.STT(
-            api_key=DEEPGRAM_API_KEY,
-            model="nova-3",
-            language="en",
-        ),
+        stt=deepgram.STT(api_key=os.getenv("DEEPGRAM_API_KEY"), model="nova-3", language="en"),
         llm=ballerina_llm,
-        tts=deepgram.TTS(
-            api_key=DEEPGRAM_API_KEY,
-            model="aura-2-asteria-en",
-        ),
+        tts=deepgram.TTS(api_key=os.getenv("DEEPGRAM_API_KEY"), model="aura-2-asteria-en"),
         vad=silero.VAD.load(
             activation_threshold=0.4,
             min_speech_duration=0.1,    
@@ -173,29 +139,14 @@ async def entrypoint(ctx: JobContext):
             turn_detection="vad",      
             allow_interruptions=True,
             endpointing={
-                "mode": "dynamic",
-                "min_delay": 0.2,       
-                "max_delay": 0.5,       
+                "mode": "fixed",
+                "min_delay": 0.5,       
+                "max_delay": 0.8,       
             },
         ),
     )
 
     wire_events(session, room)
-
-    # Audio playback tracking
-    async def _attach_audio_output_hooks():
-        while session.output.audio is None:
-            await asyncio.sleep(0.05)
-
-        @session.output.audio.on("playback_started")
-        def _on_playback_started(ev):
-            log_tracking("TTS playback started (audio hitting speakers)")
-
-        @session.output.audio.on("playback_finished")
-        def _on_playback_finished(ev):
-            log_tracking("TTS playback completed (audio finished)")
-
-    loop.create_task(_attach_audio_output_hooks())
 
     async def _on_shutdown():
         await session.aclose()
