@@ -6,6 +6,7 @@ import uuid
 from typing import Any, Callable
 
 import websockets
+from websockets.protocol import State
 
 from livekit.agents import llm, utils
 from livekit.agents._exceptions import APIConnectionError
@@ -54,7 +55,7 @@ class BallerinaLLM(llm.LLM):
 
     async def _acquire_ws(self) -> websockets.WebSocketClientProtocol:
         async with self._ws_lock:
-            if self._ws is None or getattr(self._ws, "closed", True):
+            if self._ws is None or self._ws.state != State.OPEN:
                 url = f"{self._url}?sessionId={self._session_id}"
                 self._ws = await websockets.connect(
                     url, max_size=self._max_message_size
