@@ -64,11 +64,14 @@ class BallerinaLLM(llm.LLM):
     async def _reset_ws(self) -> None:
         async with self._ws_lock:
             if self._ws is not None:
+                ws = self._ws
+                self._ws = None
                 try:
-                    await self._ws.close()
+                    await asyncio.shield(ws.close())
                 except Exception:
                     pass
-                self._ws = None
+                except asyncio.CancelledError:
+                    pass
 
     def chat(
         self,
@@ -115,6 +118,7 @@ class BallerinaLLMStream(llm.LLMStream):
             return
 
         ws = await self._ballerina._acquire_ws()
+        response_complete = False
 
         try:
             await ws.send(user_text)
@@ -132,6 +136,8 @@ class BallerinaLLMStream(llm.LLMStream):
                     break
                 elif raw.startswith("ERROR:"):
                     raise APIConnectionError(raw[len("ERROR:"):])
+
+            response_complete = True
 
             # Publish full text to UI immediately — before TTS starts
             if self._ballerina._on_response and full_content:
@@ -156,7 +162,8 @@ class BallerinaLLMStream(llm.LLMStream):
                 await asyncio.sleep(0)  # yield so AgentSession can start TTS on this sentence
 
         except asyncio.CancelledError:
-            await self._ballerina._reset_ws()
+            if not response_complete:
+                await self._ballerina._reset_ws()
             raise
         except (websockets.ConnectionClosed, OSError) as e:
             await self._ballerina._reset_ws()
