@@ -67,6 +67,7 @@ def wire_events(session: AgentSession, room: rtc.Room):
     
     first_interim_logged = False
     user_speech_start_time = None
+    turn_complete_logs = []
 
     def log_tracking(msg: str):
         nonlocal last_event_ts
@@ -151,13 +152,17 @@ def wire_events(session: AgentSession, room: rtc.Room):
             tts_ttfb = turn_metrics.get("tts_node_ttfb", 0.0)
             e2e_total = turn_metrics.get("e2e_latency", 0.0)
             
-            log_tracking(
+            turn_log = (
                 f"[TURN COMPLETE] "
                 f"STT: {stt_delay*1000:.0f}ms | "
                 f"LLM TTFT: {llm_ttft*1000:.0f}ms | "
                 f"TTS TTFB: {tts_ttfb*1000:.0f}ms | "
                 f"Total E2E: {e2e_total*1000:.0f}ms"
             )
+            turn_complete_logs.append(turn_log)
+            
+            all_logs = "\n".join(turn_complete_logs)
+            log_tracking(f"\n{all_logs}")
             
             loop.create_task(monitor_webrtc_health())
 
