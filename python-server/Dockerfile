@@ -33,9 +33,7 @@ RUN chown -R appuser:appgroup /app /home/appuser
 
 USER 10001
 
-# Expose the correct port
-# Note: Ensure your code uses port 8006 or 8081 as discussed earlier
-EXPOSE 8006
+EXPOSE 8080
 
 # Run the python server
 CMD ["python", "main.py", "start", "--log-level", "INFO"]

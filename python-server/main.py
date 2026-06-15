@@ -3,7 +3,9 @@ import asyncio
 import json
 import logging
 import time
+import threading
 import warnings
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -229,7 +231,21 @@ async def entrypoint(ctx: JobContext):
     )
     print("\n✓ Agent ready and tracking...\n")
 
+def _start_health_server(port: int = 8080):
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("0.0.0.0", port), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True, name="health-server").start()
+    print(f"[Health] Listening on 0.0.0.0:{port}")
+
 if __name__ == "__main__":
+    _start_health_server()
     agents.cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,

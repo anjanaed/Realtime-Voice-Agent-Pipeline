@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: python-server
+  template:
+    metadata:
+      labels:
+        app: python-server
+    spec:
+      containers:
+        - name: python-server
+          image: local-app:v1
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: python-server-secrets
+          resources:
+            requests:
+              cpu: "0m"
+              memory: "0Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1500Mi"
