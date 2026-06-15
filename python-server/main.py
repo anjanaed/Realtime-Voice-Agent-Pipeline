@@ -242,7 +242,6 @@ def _start_health_server(port: int = 8080):
 
     server = HTTPServer(("0.0.0.0", port), _Handler)
     threading.Thread(target=server.serve_forever, daemon=True, name="health-server").start()
-    print(f"[Health] Listening on 0.0.0.0:{port}")
 
 if __name__ == "__main__":
     _start_health_server()
