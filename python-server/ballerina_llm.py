@@ -19,6 +19,8 @@ import uuid
 from typing import Any, Callable
 
 import websockets
+from websockets.asyncio.client import ClientConnection
+from websockets.connection import State as WSState
 
 from livekit.agents import llm, utils
 from livekit.agents._exceptions import APIConnectionError
@@ -54,7 +56,7 @@ class IntegratorAgent(llm.LLM):
         self._url = url
         self._session_id = session_id or str(uuid.uuid4())
         self._max_message_size = max_message_size
-        self._ws: websockets.WebSocketClientProtocol | None = None
+        self._ws: ClientConnection | None = None
         self._ws_lock = asyncio.Lock()
         self._on_response = on_response
 
@@ -68,7 +70,7 @@ class IntegratorAgent(llm.LLM):
 
     async def _acquire_ws(self) -> websockets.WebSocketClientProtocol:
         async with self._ws_lock:
-            if self._ws is None or not self._ws.open:
+            if self._ws is None or self._ws.state is not WSState.OPEN:
                 url = f"{self._url}?sessionId={self._session_id}"
                 self._ws = await websockets.connect(
                     url,
