@@ -68,7 +68,7 @@ class IntegratorAgent(llm.LLM):
 
     async def _acquire_ws(self) -> websockets.WebSocketClientProtocol:
         async with self._ws_lock:
-            if self._ws is None or getattr(self._ws, "closed", True):
+            if self._ws is None or not self._ws.open:
                 url = f"{self._url}?sessionId={self._session_id}"
                 self._ws = await websockets.connect(
                     url,
@@ -82,11 +82,14 @@ class IntegratorAgent(llm.LLM):
     async def _close_ws(self) -> None:
         async with self._ws_lock:
             if self._ws is not None:
+                ws = self._ws
+                self._ws = None
                 try:
-                    await self._ws.close()
+                    await asyncio.shield(ws.close())
                 except Exception:
                     pass
-                self._ws = None
+                except asyncio.CancelledError:
+                    pass
 
     def chat(
         self,
@@ -133,6 +136,7 @@ class IntegratorAgentStream(llm.LLMStream):
             return
 
         ws = await self._ballerina._acquire_ws()
+        response_complete = False
 
         try:
             await ws.send(user_text)
@@ -150,6 +154,8 @@ class IntegratorAgentStream(llm.LLMStream):
                     raise APIConnectionError(raw[len("ERROR:"):])
                 full_content += raw
 
+            response_complete = True
+
             if self._ballerina._on_response and full_content:
                 self._ballerina._on_response(full_content)
 
@@ -163,7 +169,8 @@ class IntegratorAgentStream(llm.LLMStream):
                 await asyncio.sleep(0)
 
         except asyncio.CancelledError:
-            await self._ballerina._close_ws()
+            if not response_complete:
+                await self._ballerina._close_ws()
             raise
         except (websockets.ConnectionClosed, OSError) as e:
             await self._ballerina._close_ws()
