@@ -1,3 +1,16 @@
+"""
+ Copyright (c) 2026, WSO2 LLC. (http://www.wso2.com).
+
+ This software is the property of WSO2 LLC. and its suppliers, if any.
+ Dissemination of any information or reproduction of any material contained
+ herein is strictly forbidden, unless permitted by WSO2 in accordance with
+ the WSO2 Commercial License available at http://wso2.com/licenses.
+ For specific language governing the permissions and limitations under
+ this license, please see the license as well as any agreement you’ve
+ entered into with WSO2 governing the purchase of this software and any
+ associated services.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +19,6 @@ import uuid
 from typing import Any, Callable
 
 import websockets
-from websockets.protocol import State
 
 from livekit.agents import llm, utils
 from livekit.agents._exceptions import APIConnectionError
@@ -29,7 +41,7 @@ def _split_sentences(text: str) -> list[str]:
     return [p.strip() for p in _SENTENCE_RE.split(text) if p.strip()]
 
 
-class BallerinaLLM(llm.LLM):
+class IntegratorAgent(llm.LLM):
     def __init__(
         self,
         *,
@@ -47,32 +59,28 @@ class BallerinaLLM(llm.LLM):
 
     @property
     def model(self) -> str:
-        return "ballerina-wso2-agent"
+        return "wso2-integrator-agent"
 
     @property
     def provider(self) -> str:
-        return "Ballerina"
+        return "wso2-integrator"
 
     async def _acquire_ws(self) -> websockets.WebSocketClientProtocol:
         async with self._ws_lock:
-            if self._ws is None or self._ws.state != State.OPEN:
+            if self._ws is None or getattr(self._ws, "closed", True):
                 url = f"{self._url}?sessionId={self._session_id}"
-                self._ws = await websockets.connect(
-                    url, max_size=self._max_message_size
-                )
+                self._ws = await websockets.connect(url, max_size=self._max_message_size)
+                await self._ws.recv()  # consume READY handshake
             return self._ws
 
-    async def _reset_ws(self) -> None:
+    async def _close_ws(self) -> None:
         async with self._ws_lock:
             if self._ws is not None:
-                ws = self._ws
-                self._ws = None
                 try:
-                    await asyncio.shield(ws.close())
+                    await self._ws.close()
                 except Exception:
                     pass
-                except asyncio.CancelledError:
-                    pass
+                self._ws = None
 
     def chat(
         self,
@@ -83,8 +91,8 @@ class BallerinaLLM(llm.LLM):
         parallel_tool_calls: NotGivenOr[bool] = NOT_GIVEN,
         tool_choice: NotGivenOr[ToolChoice] = NOT_GIVEN,
         extra_kwargs: NotGivenOr[dict[str, Any]] = NOT_GIVEN,
-    ) -> BallerinaLLMStream:
-        return BallerinaLLMStream(
+    ) -> IntegratorAgentStream:
+        return IntegratorAgentStream(
             self,
             chat_ctx=chat_ctx,
             tools=tools or [],
@@ -92,13 +100,13 @@ class BallerinaLLM(llm.LLM):
         )
 
     async def aclose(self) -> None:
-        await self._reset_ws()
+        await self._close_ws()
 
 
-class BallerinaLLMStream(llm.LLMStream):
+class IntegratorAgentStream(llm.LLMStream):
     def __init__(
         self,
-        llm: BallerinaLLM,
+        llm: IntegratorAgent,
         *,
         chat_ctx: ChatContext,
         tools: list[llm.Tool],
@@ -107,65 +115,50 @@ class BallerinaLLMStream(llm.LLMStream):
         super().__init__(llm, chat_ctx=chat_ctx, tools=tools, conn_options=conn_options)
         self._ballerina = llm
 
-    def _latest_user_text(self) -> str | None:
+    def _latest_user_message(self) -> str | None:
         for msg in reversed(self._chat_ctx.messages()):
             if msg.role == "user":
                 return (msg.text_content or "").strip() or None
         return None
 
     async def _run(self) -> None:
-        user_text = self._latest_user_text()
+        user_text = self._latest_user_message()
         if not user_text:
             return
 
         ws = await self._ballerina._acquire_ws()
-        response_complete = False
 
         try:
             await ws.send(user_text)
             message_id = utils.shortuuid("bal_")
-
-            # Phase 1: receive full response from Ballerina
             full_content = ""
+
             while True:
                 raw = await ws.recv()
                 if not isinstance(raw, str):
                     continue
-                if raw.startswith("CHUNK:"):
-                    full_content += raw[len("CHUNK:"):]
-                elif raw == "END":
+                if raw == "END":
                     break
-                elif raw.startswith("ERROR:"):
+                if raw.startswith("ERROR:"):
+                    await self._ballerina._close_ws()
                     raise APIConnectionError(raw[len("ERROR:"):])
+                full_content += raw
 
-            response_complete = True
-
-            # Publish full text to UI immediately — before TTS starts
             if self._ballerina._on_response and full_content:
                 self._ballerina._on_response(full_content)
 
-            # Phase 2: split into sentences, load queue, emit one chunk per sentence
-            queue: asyncio.Queue[str] = asyncio.Queue()
-            for sentence in _split_sentences(full_content):
-                queue.put_nowait(sentence)
-            # fallback: if regex found no boundaries, emit the whole response
-            if queue.empty() and full_content.strip():
-                queue.put_nowait(full_content.strip())
-
-            while not queue.empty():
-                sentence = queue.get_nowait()
+            for sentence in _split_sentences(full_content) or [full_content.strip()]:
                 self._event_ch.send_nowait(
                     llm.ChatChunk(
                         id=message_id,
                         delta=llm.ChoiceDelta(role="assistant", content=sentence + " "),
                     )
                 )
-                await asyncio.sleep(0)  # yield so AgentSession can start TTS on this sentence
+                await asyncio.sleep(0)
 
         except asyncio.CancelledError:
-            if not response_complete:
-                await self._ballerina._reset_ws()
+            await self._ballerina._close_ws()
             raise
         except (websockets.ConnectionClosed, OSError) as e:
-            await self._ballerina._reset_ws()
-            raise APIConnectionError(f"Ballerina WebSocket error: {e}") from e
+            await self._ballerina._close_ws()
+            raise APIConnectionError(f"WebSocket error: {e}") from e

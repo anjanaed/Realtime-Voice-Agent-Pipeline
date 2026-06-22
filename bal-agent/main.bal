@@ -233,7 +233,7 @@ service class LLMService {
             return;
         }
 
-        check caller->writeMessage(string `CHUNK:${agentResponse}`);
+        check caller->writeMessage(agentResponse);
         check caller->writeMessage("END");
     }
 
