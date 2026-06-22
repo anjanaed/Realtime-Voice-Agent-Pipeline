@@ -70,7 +70,12 @@ class IntegratorAgent(llm.LLM):
         async with self._ws_lock:
             if self._ws is None or getattr(self._ws, "closed", True):
                 url = f"{self._url}?sessionId={self._session_id}"
-                self._ws = await websockets.connect(url, max_size=self._max_message_size)
+                self._ws = await websockets.connect(
+                    url,
+                    max_size=self._max_message_size,
+                    ping_interval=20,
+                    ping_timeout=10,
+                )
                 await self._ws.recv()  # consume READY handshake
             return self._ws
 
