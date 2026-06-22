@@ -46,12 +46,13 @@ class IntegratorAgent(llm.LLM):
         self,
         *,
         url: str,
+        session_id: str | None = None,
         max_message_size: int = 10 * 1024 * 1024,
         on_response: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__()
         self._url = url
-        self._session_id = str(uuid.uuid4())
+        self._session_id = session_id or str(uuid.uuid4())
         self._max_message_size = max_message_size
         self._ws: websockets.WebSocketClientProtocol | None = None
         self._ws_lock = asyncio.Lock()

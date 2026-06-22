@@ -33,7 +33,7 @@ from livekit.agents import (
 )
 from livekit.plugins import silero, deepgram
 
-from ballerina_llm import BallerinaLLM
+from ballerina_llm import IntegratorAgent
 
 load_dotenv()
 
@@ -190,8 +190,9 @@ async def entrypoint(ctx: JobContext):
 
     loop = asyncio.get_running_loop()
 
-    ballerina_llm = BallerinaLLM(
+    ballerina_llm = IntegratorAgent(
         url=os.getenv("LLM_SERVICE_URL", "ws://localhost:8003/llm"),
+        session_id=room.name,
         on_response=lambda text: loop.create_task(_publish(room, "assistant", text)),
     )
 
