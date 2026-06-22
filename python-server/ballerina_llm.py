@@ -58,8 +58,12 @@ class BallerinaLLM(llm.LLM):
             if self._ws is None or self._ws.state != State.OPEN:
                 url = f"{self._url}?sessionId={self._session_id}"
                 self._ws = await websockets.connect(
-                    url, max_size=self._max_message_size
+                    url,
+                    max_size=self._max_message_size,
+                    ping_interval=20,
+                    ping_timeout=10,
                 )
+                await self._ws.recv()  # consume READY handshake
             return self._ws
 
     async def _reset_ws(self) -> None:
@@ -131,12 +135,12 @@ class BallerinaLLMStream(llm.LLMStream):
                 raw = await ws.recv()
                 if not isinstance(raw, str):
                     continue
-                if raw.startswith("CHUNK:"):
-                    full_content += raw[len("CHUNK:"):]
-                elif raw == "END":
+                if raw == "END":
                     break
-                elif raw.startswith("ERROR:"):
+                if raw.startswith("ERROR:"):
+                    await self._ballerina._reset_ws()
                     raise APIConnectionError(raw[len("ERROR:"):])
+                full_content += raw
 
             response_complete = True
 
