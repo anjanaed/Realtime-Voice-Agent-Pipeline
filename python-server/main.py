@@ -31,7 +31,8 @@ from livekit.agents import (
     WorkerType,
     TurnHandlingOptions,
 )
-from livekit.plugins import silero, deepgram
+from livekit.agents import inference
+from livekit.plugins import deepgram
 
 from ballerina_llm import IntegratorAgent
 
@@ -200,20 +201,15 @@ async def entrypoint(ctx: JobContext):
         stt=deepgram.STT(api_key=os.getenv("DEEPGRAM_API_KEY"), model="nova-3", language="en"),
         llm=ballerina_llm,
         tts=deepgram.TTS(api_key=os.getenv("DEEPGRAM_API_KEY"), model="aura-2-asteria-en"),
-        vad=silero.VAD.load(
+        vad=inference.VAD(
             activation_threshold=0.4,
-            min_speech_duration=0.1,    
-            min_silence_duration=0.3,   
+            min_speech_duration=0.1,
+            min_silence_duration=0.3,
             prefix_padding_duration=0.2,
         ),
         turn_handling=TurnHandlingOptions(
-            turn_detection="vad",      
+            turn_detection=inference.TurnDetector(),
             allow_interruptions=True,
-            endpointing={
-                "mode": "fixed",
-                "min_delay": 0.5,       
-                "max_delay": 0.8,       
-            },
         ),
     )
 
@@ -230,7 +226,7 @@ async def entrypoint(ctx: JobContext):
         room=room,
         agent=Agent(instructions="You are Jarvis, a WSO2 expert voice assistant."),
     )
-    print("\n✓ Agent ready and tracking...\n")
+    print(f"[Agent] Ready — room: {room.name} | session: {ballerina_llm._session_id} | LLM: {os.getenv('LLM_SERVICE_URL', 'ws://localhost:8003/llm')}")
 
 def _start_health_server(port: int = 8080):
     class _Handler(BaseHTTPRequestHandler):
@@ -245,6 +241,7 @@ def _start_health_server(port: int = 8080):
     threading.Thread(target=server.serve_forever, daemon=True, name="health-server").start()
 
 if __name__ == "__main__":
+    print("[Agent] Starting WSO2 voice agent...")
     _start_health_server()
     agents.cli.run_app(
         WorkerOptions(

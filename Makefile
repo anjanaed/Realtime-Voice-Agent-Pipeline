@@ -8,3 +8,6 @@ t:
 
 y:
 	cd python-server && .venv/bin/python3 test.py start --log-level INFO
+
+b:
+	cd bal-agent && bal run

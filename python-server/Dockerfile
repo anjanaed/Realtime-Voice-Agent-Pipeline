@@ -24,9 +24,8 @@ COPY . .
 RUN groupadd -g 10001 appgroup && \
     useradd -u 10001 -g appgroup -m appuser
 
-# Pre-download the LiveKit models (VAD, Turn Detector, etc.)
-# This runs as root during build but stores them in the appuser's home
-RUN python3 main.py download-files
+# Pre-initialize bundled inference models (VAD + TurnDetector, no HuggingFace download needed)
+RUN python -c "from livekit.agents import inference; inference.VAD(); inference.TurnDetector()"
 
 # Fix permissions for the app directory AND the home directory (where models live)
 RUN chown -R appuser:appgroup /app /home/appuser

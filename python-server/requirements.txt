@@ -1,15 +1,10 @@
 python-dotenv>=1.0.0
 livekit>=1.1.2
-livekit-plugins-silero>=1.1.2
 livekit-plugins-openai>=1.1.2
 livekit-plugins-elevenlabs>=1.1.2
 livekit-plugins-deepgram>=1.1.2
 livekit-plugins-cartesia>=1.1.2
-livekit-plugins-turn-detector>=1.1.2
 livekit-api>=1.1.0
-numpy>=1.24.0
-scipy>=1.10.0
-pysbd>=0.3.4
 openai>=1.52.0
 websockets>=12.0
 aiohttp>=3.9.0
