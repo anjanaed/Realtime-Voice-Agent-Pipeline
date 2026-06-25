@@ -254,11 +254,14 @@ if __name__ == "__main__":
     # Start the LiveKit token server alongside the agent, in a background
     # daemon thread, before agents.cli.run_app() takes over the main loop.
     # The token server is the only exposed port (REST on :8006) and also
-    # serves /health for liveness probes. Its source of truth stays in the
-    # sibling token-server/ folder (kept on sys.path here and copied into the
-    # image with the same relative layout).
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "token-server"))
-    from token_server import start_token_server_in_thread
+    # serves /health for liveness probes. token_server.py is vendored next to
+    # main.py (so the image builds from python-server/ alone); fall back to the
+    # sibling token-server/ folder for older local checkouts.
+    try:
+        from token_server import start_token_server_in_thread
+    except ModuleNotFoundError:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "token-server"))
+        from token_server import start_token_server_in_thread
     start_token_server_in_thread()
 
     agents.cli.run_app(

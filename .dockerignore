@@ -1,0 +1,27 @@
+# Build context is the repo root (see python-server/Dockerfile). Keep it lean
+# and never bake local environments or secrets into the image.
+
+# Virtual environments
+**/.venv
+**/venv
+
+# Python caches
+**/__pycache__
+**/*.pyc
+
+# Secrets — never copy .env into the image (use envFrom / --env-file at runtime)
+**/.env
+
+# VCS and tooling
+.git
+.gitignore
+.claude
+
+# Not used by the python-server image
+bal-agent/
+python-server/k8s/
+python-server/tests/
+
+# Docs and test assets
+**/*.md
+**/testvoice.wav

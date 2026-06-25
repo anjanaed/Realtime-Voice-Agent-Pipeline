@@ -1,4 +1,4 @@
-.PHONY: agent token sim bal p t y b
+.PHONY: agent token sim bal image vendor-token p t y b
 
 # Voice agent (python-server). Also starts the token server in-process on :8006.
 agent p:
@@ -16,3 +16,13 @@ sim y:
 # Ballerina LLM agent (bal-agent)
 bal b:
 	cd bal-agent && bal run
+
+# Refresh the vendored copy of the token server from its canonical source.
+# Run this whenever token-server/token_server.py changes.
+vendor-token:
+	cp token-server/token_server.py python-server/token_server.py
+
+# Build the production image (voice agent + bundled token server).
+# Context is python-server/ itself; token_server.py is vendored in there.
+image: vendor-token
+	cd python-server && docker build -t voice-agent:latest .

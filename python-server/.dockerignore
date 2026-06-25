@@ -1,0 +1,25 @@
+# Build context is this folder (python-server/, see Dockerfile). Keep it lean
+# and never bake local environments or secrets into the image.
+
+# Virtual environments
+.venv
+venv
+
+# Python caches
+**/__pycache__
+**/*.pyc
+
+# Secrets — never copy .env into the image (use envFrom / --env-file at runtime)
+.env
+
+# Not used by the image
+k8s/
+tests/
+
+# Docs and test assets
+*.md
+testvoice.wav
+
+# The Dockerfile itself
+Dockerfile
+.dockerignore
