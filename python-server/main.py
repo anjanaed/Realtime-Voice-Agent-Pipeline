@@ -13,6 +13,9 @@ from dotenv import load_dotenv
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", message=".*metrics_collected.*")
 
+# Install a local (non-exporting) tracer provider and stub out LiveKit's
+# end-of-session telemetry upload. This keeps tracing hooks happy without
+# making any network calls home to LiveKit at session shutdown.
 from opentelemetry.sdk.trace import TracerProvider
 from livekit.agents.telemetry import set_tracer_provider
 set_tracer_provider(TracerProvider())
@@ -55,6 +58,9 @@ logging.getLogger("livekit.rtc").setLevel(logging.WARNING)
 logging.getLogger("livekit.rtc").addFilter(LogFilter())
 logging.getLogger().addFilter(LogFilter())
 
+# Push a transcript line ("stt") or the assistant's reply ("assistant") to
+# clients over the LiveKit data channel. The frontend subscribes to the
+# "voice-text" topic to render the live conversation alongside the audio.
 async def _publish(room: rtc.Room, msg_type: str, text: str):
     payload = json.dumps({"type": msg_type, "text": text}).encode("utf-8")
     try:
@@ -63,9 +69,16 @@ async def _publish(room: rtc.Room, msg_type: str, text: str):
         pass
 
 def wire_events(session: AgentSession, room: rtc.Room):
+    """Attach latency-tracing event handlers to the session.
+
+    This is pure observability: it logs how long each stage of a turn takes
+    (VAD -> STT -> LLM -> TTS) and a periodic WebRTC health snapshot. None of
+    it changes the agent's behaviour, so it can be removed without affecting
+    the pipeline.
+    """
     loop = asyncio.get_running_loop()
-    
-    # Thread-safe local tracking counter
+
+    # Wall-clock (ms) of the previous logged event, used to print "+Nms" deltas.
     last_event_ts = time.perf_counter() * 1000.0
     
     first_interim_logged = False
@@ -95,6 +108,10 @@ def wire_events(session: AgentSession, room: rtc.Room):
                     )
             transport_msg = " | ".join(audio_stats) if audio_stats else "No audio inbound stats"
             
+            # Reach into LiveKit-internal STT stream queues to estimate how much
+            # audio is waiting to be transcribed. These are private attributes,
+            # so every access is hasattr-guarded to fail quietly if the library
+            # internals change in a future version.
             stt_backlog = 0
             if hasattr(session, "stt") and hasattr(session.stt, "_streams"):
                 for stream in session.stt._streams:
@@ -145,6 +162,8 @@ def wire_events(session: AgentSession, room: rtc.Room):
         if hasattr(item, "role") and item.role == "assistant" and getattr(item, "metrics", None):
             turn_metrics = item.metrics
             
+            # Find the most recent user turn to read its STT transcription
+            # delay (private chat-context API).
             stt_delay = 0.0
             for msg in reversed(session._chat_ctx.messages()):
                 if msg.role == "user":
@@ -201,11 +220,13 @@ async def entrypoint(ctx: JobContext):
         stt=deepgram.STT(api_key=os.getenv("DEEPGRAM_API_KEY"), model="nova-3", language="en"),
         llm=ballerina_llm,
         tts=deepgram.TTS(api_key=os.getenv("DEEPGRAM_API_KEY"), model="aura-2-asteria-en"),
+        # Voice-activity-detection tuning (all durations in seconds). Values are
+        # biased toward low latency / high responsiveness:
         vad=inference.VAD(
-            activation_threshold=0.4,
-            min_speech_duration=0.1,
-            min_silence_duration=0.3,
-            prefix_padding_duration=0.2,
+            activation_threshold=0.4,    # speech-probability needed to open a turn (lower = more sensitive)
+            min_speech_duration=0.1,     # ignore blips shorter than 100ms (not real speech)
+            min_silence_duration=0.3,    # 300ms of silence ends the user's turn
+            prefix_padding_duration=0.2,  # keep 200ms before onset so the first word isn't clipped
         ),
         turn_handling=TurnHandlingOptions(
             turn_detection=inference.TurnDetector(),
@@ -228,6 +249,9 @@ async def entrypoint(ctx: JobContext):
     )
     print(f"[Agent] Ready — room: {room.name} | session: {ballerina_llm._session_id} | LLM: {os.getenv('LLM_SERVICE_URL', 'ws://localhost:8003/llm')}")
 
+# Minimal HTTP server that answers 200 on any GET. Exists only so container
+# orchestrators (e.g. the k8s liveness/readiness probe) have an endpoint to
+# hit on :8080; the agent itself communicates over LiveKit, not HTTP.
 def _start_health_server(port: int = 8080):
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self):

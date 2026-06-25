@@ -58,14 +58,16 @@ LIVEKIT_API_SECRET=your_livekit_api_secret
 ### 3. Start Ballerina LLM Service
 Make sure your Ballerina agent is running and accessible at the `LLM_SERVICE_URL`.
 
-### 4. Run the Voice Agent (includes token server)
+### 4. Run the Voice Agent
 ```bash
-python main.py
+python main.py        # or: make agent
 ```
 
-This starts both:
-- **Voice bridge** on port configured for LiveKit connection
-- **Token server** on HTTP port 8006 (GET /getToken)
+This starts the LiveKit worker (voice bridge) plus a health endpoint on
+HTTP port 8080.
+
+> The LiveKit token issuer now lives in its own service at
+> [`../token-server`](../token-server/README.md) (run with `make token`).
 
 ## Features
 
@@ -237,9 +239,13 @@ Enable verbose logging by adding print statements or use the existing log messag
 
 ## File Reference
 
-- `main.py`: Complete implementation (voice bridge + token server merged)
+- `main.py`: Voice agent worker (LiveKit entrypoint + health server)
+- `ballerina_llm.py`: `IntegratorAgent` — LLM adapter that bridges to the
+  Ballerina service over WebSocket
 - `requirements.txt`: Python dependencies
 - `.env`: Configuration (create from `.env.example`)
+- `tests/`: Call-simulation harness and fixtures
+- `k8s/`: Kubernetes deployment manifest
 
 ## Next Steps
 

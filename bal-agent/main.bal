@@ -117,6 +117,7 @@ isolated function getWSO2ProductDetails(string productKey) returns string|error 
     description: "Search WSO2 website and documentation for any query about products, configuration, troubleshooting, releases, or company news. Use this for detailed or specific questions."
 }
 isolated function searchWSO2(string query) returns string|error {
+    // Constrain the web search to wso2.com and take the top 5 organic results.
     json requestBody = {"q": string `site:wso2.com ${query}`, "num": 5};
     http:Request req = new;
     req.setJsonPayload(requestBody);
@@ -193,6 +194,8 @@ If a search returns no results, say so and suggest checking docs.wso2.com direct
     model: modelProvider
 });
 
+// WebSocket entry point for the voice pipeline. maxFrameSize is 100 MB
+// (104857600 bytes) to comfortably accommodate large prompts or replies.
 @websocket:ServiceConfig {
     maxFrameSize: 104857600
 }
@@ -208,6 +211,10 @@ service /llm on new websocket:Listener(8003) {
     }
 }
 
+// One instance per WebSocket connection. Protocol with the Python client
+// (python-server/ballerina_llm.py): send "READY" on open, then for each user
+// message reply with the agent's answer followed by an "END" marker, or
+// "ERROR:<reason>" + "END" on failure.
 service class LLMService {
     *websocket:Service;
 
@@ -225,6 +232,8 @@ service class LLMService {
     remote function onTextMessage(websocket:Caller caller, string userText) returns error? {
         io:println(string `[LLM Service] Session ${self.sessionId}: Received text (${userText.length()} chars): ${userText}`);
 
+        // sessionId keys the agent's conversation memory, so context is
+        // retained across turns on the same connection.
         string|error agentResponse = agent.run(userText, self.sessionId);
         if agentResponse is error {
             io:println(string `[LLM Service] Agent error: ${agentResponse.message()}`);

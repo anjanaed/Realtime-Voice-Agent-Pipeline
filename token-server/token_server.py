@@ -55,12 +55,16 @@ async def handle_token(request):
         api_key=LIVEKIT_API_KEY,
         api_secret=LIVEKIT_API_SECRET,
     )
+    # The voice agent registers as an explicit-dispatch worker, so it does not
+    # auto-join rooms. Ask LiveKit to place a "voice-agent" instance into this
+    # room; without this the user would connect to an empty room.
     try:
         await lkapi.agent_dispatch.create_dispatch(
             api.CreateAgentDispatchRequest(room=room_name, agent_name="voice-agent")
         )
         print(f"[TokenServer] Dispatched agent to room: {room_name}")
     except Exception as e:
+        # Non-fatal: an agent may already be in the room. Still return the token.
         print(f"[TokenServer] Agent dispatch warning: {e}")
     finally:
         await lkapi.aclose()
@@ -84,6 +88,7 @@ async def run_token_server():
 
     runner = web.AppRunner(app)
     await runner.setup()
+    # Clients fetch a token from GET http://<host>:8006/getToken
     site = web.TCPSite(runner, "0.0.0.0", 8006)
     await site.start()
     print("[TokenServer] Listening on http://0.0.0.0:8006")

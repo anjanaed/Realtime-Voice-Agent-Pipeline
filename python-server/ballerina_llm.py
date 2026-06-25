@@ -33,6 +33,9 @@ from livekit.agents.types import (
 )
 
 
+# Split on whitespace that sits between sentence-ending punctuation (. ! ?) and
+# the next sentence's opening character (a capital letter or a quote). The
+# lookbehind/lookahead means "1.5" or "e.g. foo" are left intact.
 _SENTENCE_RE = re.compile(r'(?<=[.!?])\s+(?=[A-Z"\'])')
 
 
@@ -44,12 +47,24 @@ def _split_sentences(text: str) -> list[str]:
 
 
 class IntegratorAgent(llm.LLM):
+    """LiveKit LLM that proxies turns to the Ballerina agent over a WebSocket.
+
+    Wire protocol (see bal-agent/main.bal for the server side):
+      1. On connect the server sends a single "READY" message (handshake).
+      2. The client sends the user's transcript as one text message.
+      3. The server streams back the answer as text, then a final "END" marker.
+         Failures arrive as a single "ERROR:<message>" message.
+
+    One WebSocket is held open per session_id and reused across turns so the
+    Ballerina side keeps that conversation's memory/context.
+    """
+
     def __init__(
         self,
         *,
         url: str,
         session_id: str | None = None,
-        max_message_size: int = 10 * 1024 * 1024,
+        max_message_size: int = 10 * 1024 * 1024,  # 10 MB cap on a single WS message
         on_response: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__()
@@ -75,10 +90,12 @@ class IntegratorAgent(llm.LLM):
                 self._ws = await websockets.connect(
                     url,
                     max_size=self._max_message_size,
+                    # Keepalive: ping every 20s and drop the connection if no pong
+                    # arrives within 10s, so half-open sockets are detected quickly.
                     ping_interval=20,
                     ping_timeout=10,
                 )
-                await self._ws.recv()  # consume READY handshake
+                await self._ws.recv()  # consume the server's "READY" handshake
             return self._ws
 
     async def _close_ws(self) -> None:
@@ -161,6 +178,9 @@ class IntegratorAgentStream(llm.LLMStream):
             if self._ballerina._on_response and full_content:
                 self._ballerina._on_response(full_content)
 
+            # Emit one chunk per sentence (rather than the whole reply at once)
+            # so downstream TTS can begin speaking the first sentence while the
+            # rest are still being handed off.
             for sentence in _split_sentences(full_content) or [full_content.strip()]:
                 self._event_ch.send_nowait(
                     llm.ChatChunk(
@@ -171,6 +191,9 @@ class IntegratorAgentStream(llm.LLMStream):
                 await asyncio.sleep(0)
 
         except asyncio.CancelledError:
+            # Turn was interrupted (e.g. user barged in) before the reply
+            # finished. Drop the socket so a half-read response can't bleed into
+            # the next turn; a fresh connection is opened on the following turn.
             if not response_complete:
                 await self._ballerina._close_ws()
             raise

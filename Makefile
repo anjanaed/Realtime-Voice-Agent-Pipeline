@@ -1,13 +1,17 @@
-.PHONY: p,t
+.PHONY: agent token sim bal p t y b
 
-p:
+# Voice agent (python-server)
+agent p:
 	cd python-server && .venv/bin/python3 main.py start --log-level INFO
 
-t:
-	cd python-server && .venv/bin/python3 token_server.py start --log-level INFO
+# LiveKit token server (token-server)
+token t:
+	cd token-server && .venv/bin/python3 token_server.py
 
-y:
-	cd python-server && .venv/bin/python3 test.py start --log-level INFO
+# Call simulation / load test (streams a wav fixture into the room)
+sim y:
+	cd python-server && .venv/bin/python3 tests/simulate_call.py
 
-b:
+# Ballerina LLM agent (bal-agent)
+bal b:
 	cd bal-agent && bal run

@@ -7,13 +7,16 @@ from livekit import rtc, api
 from dotenv import load_dotenv
 import aiohttp
 
-load_dotenv()
+_HERE = os.path.dirname(__file__)
+# Load the voice-agent's .env (one level up from tests/) regardless of CWD
+load_dotenv(os.path.join(_HERE, os.pardir, ".env"))
 
 LIVEKIT_URL = os.getenv("LIVEKIT_URL")
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
 ROOM_NAME = "voice-room"
-AUDIO_FILE = "testvoice.wav"  # Your 16kHz Mono WAV file
+# 16kHz mono WAV fixture, resolved relative to this file so it works from any CWD
+AUDIO_FILE = os.path.join(_HERE, "fixtures", "testvoice.wav")
 
 
 async def get_token():
@@ -148,7 +151,8 @@ async def main():
         print(f"Agent not detected yet. Current Participants: {[p.identity for p in room.remote_participants.values()]}")
         print("Proceeding with audio playback anyway...")
 
-    # 3. Speak
+    # 3. Speak: replay the clip several times to simulate a multi-turn
+    # conversation and soak-test the pipeline (7 turns, 20s apart).
     num_plays = 7
     play_interval = 20
 
@@ -179,15 +183,17 @@ async def main():
 
                 frame = rtc.AudioFrame(data, sample_rate=16000, num_channels=1, samples_per_channel=actual_samples)
                 await source.capture_frame(frame)
-                
-                # Maintain real-time pacing 
+
+                # Sleep one frame's worth (20ms) so audio is sent at real-time
+                # speed rather than dumped all at once, mimicking a live mic.
                 await asyncio.sleep(0.02)
         
         if play_idx < num_plays - 1:
             print(f"Waiting {play_interval}s before next playback...")
             await asyncio.sleep(play_interval)
 
-    # 4. Wait for response and auto-exit after 15s
+    # 4. Linger after the last clip so any in-flight TTS response is received
+    # before we disconnect, then auto-exit.
     exit_delay = 30
     print(f"\nAudio finished. Staying in room for {exit_delay}s to hear response...")
     
