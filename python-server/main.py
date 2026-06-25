@@ -1,11 +1,10 @@
 import os
+import sys
 import asyncio
 import json
 import logging
 import time
-import threading
 import warnings
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -249,24 +248,19 @@ async def entrypoint(ctx: JobContext):
     )
     print(f"[Agent] Ready — room: {room.name} | session: {ballerina_llm._session_id} | LLM: {os.getenv('LLM_SERVICE_URL', 'ws://localhost:8003/llm')}")
 
-# Minimal HTTP server that answers 200 on any GET. Exists only so container
-# orchestrators (e.g. the k8s liveness/readiness probe) have an endpoint to
-# hit on :8080; the agent itself communicates over LiveKit, not HTTP.
-def _start_health_server(port: int = 8080):
-    class _Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"ok")
-        def log_message(self, *args):
-            pass
-
-    server = HTTPServer(("0.0.0.0", port), _Handler)
-    threading.Thread(target=server.serve_forever, daemon=True, name="health-server").start()
-
 if __name__ == "__main__":
     print("[Agent] Starting WSO2 voice agent...")
-    _start_health_server()
+
+    # Start the LiveKit token server alongside the agent, in a background
+    # daemon thread, before agents.cli.run_app() takes over the main loop.
+    # The token server is the only exposed port (REST on :8006) and also
+    # serves /health for liveness probes. Its source of truth stays in the
+    # sibling token-server/ folder (kept on sys.path here and copied into the
+    # image with the same relative layout).
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "token-server"))
+    from token_server import start_token_server_in_thread
+    start_token_server_in_thread()
+
     agents.cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,

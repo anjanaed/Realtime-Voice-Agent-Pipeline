@@ -72,6 +72,13 @@ async def handle_token(request):
     return web.json_response({"token": token.to_jwt(), "url": LIVEKIT_URL})
 
 
+async def handle_health(request):
+    # Liveness/readiness probe. Stays cheap and side-effect free (unlike
+    # /getToken, which dispatches an agent) so it is safe for orchestrators
+    # to poll frequently.
+    return web.Response(text="ok")
+
+
 async def run_token_server():
     app = web.Application()
     cors = aiohttp_cors.setup(
@@ -84,6 +91,7 @@ async def run_token_server():
             )
         },
     )
+    app.router.add_get("/health", handle_health)  # plain route, no CORS needed
     cors.add(app.router.add_get("/getToken", handle_token))
 
     runner = web.AppRunner(app)

@@ -1,10 +1,11 @@
 .PHONY: agent token sim bal p t y b
 
-# Voice agent (python-server)
+# Voice agent (python-server). Also starts the token server in-process on :8006.
 agent p:
 	cd python-server && .venv/bin/python3 main.py start --log-level INFO
 
-# LiveKit token server (token-server)
+# Token server standalone (token-server). Only needed to run it WITHOUT the
+# agent; `make agent` already serves tokens on :8006, so don't run both locally.
 token t:
 	cd token-server && .venv/bin/python3 token_server.py
 

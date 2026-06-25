@@ -1,18 +1,24 @@
 # Token Server
 
 A small aiohttp service that mints LiveKit access tokens for clients and
-dispatches the `voice-agent` into the requested room. Extracted from
-`python-server` so it can be developed, deployed, and scaled independently.
+dispatches the `voice-agent` into the requested room.
 
-## Endpoint
+> **Where it runs:** this folder is the source of truth, but the code is
+> bundled into the `python-server` image and started in-process there (see
+> `python-server/main.py`), so production runs a single container. The setup
+> below is for running it **standalone** — locally, or as its own deployment.
+
+## Endpoints
 
 ```
 GET /getToken?roomName=<room>&participantName=<name>
+GET /health
 ```
 
-Returns `{ "token": "<jwt>", "url": "<LIVEKIT_URL>" }`. Both query params are
-optional — `roomName` defaults to `LIVEKIT_ROOM`, `participantName` to `user`.
-CORS is open (`*`) so a browser client can call it directly.
+`/getToken` returns `{ "token": "<jwt>", "url": "<LIVEKIT_URL>" }`. Both query
+params are optional — `roomName` defaults to `LIVEKIT_ROOM`, `participantName`
+to `user`. CORS is open (`*`) so a browser client can call it directly.
+`/health` returns `200 ok` and is side-effect free, for liveness probes.
 
 Listens on `http://0.0.0.0:8006`.
 

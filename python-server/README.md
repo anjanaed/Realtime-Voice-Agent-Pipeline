@@ -63,11 +63,14 @@ Make sure your Ballerina agent is running and accessible at the `LLM_SERVICE_URL
 python main.py        # or: make agent
 ```
 
-This starts the LiveKit worker (voice bridge) plus a health endpoint on
-HTTP port 8080.
+This starts the LiveKit worker (voice bridge) **and**, in a background thread,
+the LiveKit token server on HTTP port `8006` (`GET /getToken`, `GET /health`).
+The voice agent itself exposes no port.
 
-> The LiveKit token issuer now lives in its own service at
-> [`../token-server`](../token-server/README.md) (run with `make token`).
+> The token server's code lives in [`../token-server`](../token-server/README.md);
+> `main.py` imports it from there and runs it in-process. The Docker image
+> bundles it too, so production runs a single container. Build from the repo
+> root: `docker build -f python-server/Dockerfile -t voice-agent .`
 
 ## Features
 

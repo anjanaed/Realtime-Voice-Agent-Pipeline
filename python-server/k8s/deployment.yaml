@@ -17,10 +17,22 @@ spec:
           image: local-app:v1
           imagePullPolicy: Never
           ports:
-            - containerPort: 8080
+            - containerPort: 8006
           envFrom:
             - secretRef:
                 name: python-server-secrets
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8006
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8006
+            initialDelaySeconds: 5
+            periodSeconds: 10
           resources:
             requests:
               cpu: "0m"
