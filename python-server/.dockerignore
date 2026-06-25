@@ -16,6 +16,10 @@ venv
 k8s/
 tests/
 
+# Choreo control-plane config (read from the repo by Choreo, not the container)
+.choreo/
+openapi.yaml
+
 # Docs and test assets
 *.md
 testvoice.wav

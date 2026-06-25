@@ -1,0 +1,33 @@
+# Choreo component configuration.
+#
+# This file MUST sit at the component root — the same directory Choreo builds
+# from (python-server/, where the Dockerfile lives). Docker-based components
+# can't auto-detect ports, so the inbound endpoint Choreo publishes (and gives
+# a URL for) has to be declared here. Without this file, no endpoint shows up.
+schemaVersion: 1.1
+
+endpoints:
+  # The bundled LiveKit token server (aiohttp) — plain HTTP/REST, NOT WebSocket.
+  #   GET /getToken?roomName=&participantName=  -> { token, url }
+  #   GET /health                               -> "ok"
+  - name: token-api
+    displayName: LiveKit Token API
+    service:
+      # Exposed at the URL root, so clients call <public-url>/getToken
+      basePath: /
+      # Must match EXPOSE 8006 in the Dockerfile and the port the server binds.
+      port: 8006
+    # REST → Choreo fronts it with the API gateway over HTTPS. This service
+    # speaks HTTP, not the WebSocket protocol, so there is no WSS endpoint to
+    # create here (LiveKit media WSS goes browser <-> LiveKit directly, not
+    # through Choreo).
+    type: REST
+    # Public = reachable from outside the project (gets an external HTTPS URL).
+    # Use Organization or Project to keep it internal.
+    networkVisibilities:
+      - Public
+    # OpenAPI spec for the REST API, relative to this component root.
+    # Optional: remove this line and Choreo falls back to a wildcard route that
+    # passes every path through. Kept so /getToken and /health are documented
+    # and testable in the Choreo console.
+    schemaFilePath: openapi.yaml

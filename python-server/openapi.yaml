@@ -1,0 +1,66 @@
+openapi: 3.0.3
+info:
+  title: LiveKit Token API
+  version: 1.0.0
+  description: >
+    Issues LiveKit access tokens for browser clients and dispatches the
+    "voice-agent" worker into the requested room. Served by the aiohttp token
+    server bundled into the voice agent (token_server.py) on port 8006.
+paths:
+  /getToken:
+    get:
+      summary: Issue a LiveKit access token and dispatch the voice agent.
+      operationId: getToken
+      parameters:
+        - name: roomName
+          in: query
+          required: false
+          description: Target room name. Defaults to the server's LIVEKIT_ROOM.
+          schema:
+            type: string
+        - name: participantName
+          in: query
+          required: false
+          description: Identity/display name for the participant.
+          schema:
+            type: string
+            default: user
+      responses:
+        "200":
+          description: Token issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: Signed LiveKit JWT.
+                  url:
+                    type: string
+                    description: LiveKit server URL the client should connect to.
+        "500":
+          description: LiveKit credentials are not configured on the server.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  missing:
+                    type: array
+                    items:
+                      type: string
+  /health:
+    get:
+      summary: Liveness/readiness probe.
+      operationId: health
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
