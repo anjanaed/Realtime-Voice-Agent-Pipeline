@@ -205,7 +205,16 @@ async def entrypoint(ctx: JobContext):
     await ctx.connect()
     room = ctx.room
     print(f"[LiveKit] Connected to {room.name}")
-    await ctx.wait_for_participant()
+    try:
+        await ctx.wait_for_participant()
+    except RuntimeError as e:
+        # The room was closed before any human joined — typically a stray
+        # /getToken call dispatched this agent but the client never connected
+        # (or LiveKit's empty-room timeout fired on an agent-only room). There's
+        # nothing to serve, so end the job cleanly instead of crashing it with
+        # an unhandled traceback.
+        print(f"[Agent] No participant joined room {room.name} before it closed ({e}); ending job.")
+        return
 
     loop = asyncio.get_running_loop()
 
