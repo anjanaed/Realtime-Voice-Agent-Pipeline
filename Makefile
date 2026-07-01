@@ -26,3 +26,6 @@ vendor-token:
 # Context is python-server/ itself; token_server.py is vendored in there.
 image: vendor-token
 	cd python-server && docker build -t voice-agent:latest .
+
+client c:
+	cd client && npm run dev
