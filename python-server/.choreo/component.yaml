@@ -4,7 +4,7 @@
 # from (python-server/, where the Dockerfile lives). Docker-based components
 # can't auto-detect ports, so the inbound endpoint Choreo publishes (and gives
 # a URL for) has to be declared here. Without this file, no endpoint shows up.
-schemaVersion: 1.1
+schemaVersion: 1.2
 
 endpoints:
   # The bundled LiveKit token server (aiohttp) — plain HTTP/REST, NOT WebSocket.
