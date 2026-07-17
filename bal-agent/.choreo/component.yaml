@@ -6,4 +6,4 @@ endpoints:
       port: 8003
     type: WS
     networkVisibilities:
-      - Project
+      - Organization
