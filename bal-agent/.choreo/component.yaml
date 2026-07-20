@@ -7,3 +7,5 @@ endpoints:
     type: WS
     networkVisibilities:
       - Organization
+      - Public
+      - Project
