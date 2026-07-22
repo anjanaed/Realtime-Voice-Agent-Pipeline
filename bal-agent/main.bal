@@ -211,10 +211,11 @@ service /llm on new websocket:Listener(8003) {
     }
 }
 
-// One instance per WebSocket connection. Protocol with the Python client
-// (python-server/ballerina_llm.py): send "READY" on open, then for each user
-// message reply with the agent's answer followed by an "END" marker, or
-// "ERROR:<reason>" + "END" on failure.
+// One instance per WebSocket connection. The voice pipeline sends the user's
+// text as a single message and expects the reply as a single message: the
+// WebSocket message boundary terminates the response, so there is no end marker
+// to send. A failure is reported by closing the connection with a non-1000 code
+// and a reason, which the pipeline surfaces instead of speaking.
 service class LLMService {
     *websocket:Service;
 
@@ -225,8 +226,8 @@ service class LLMService {
     }
 
     remote function onOpen(websocket:Caller caller) returns error? {
+        _ = caller;
         io:println(string `[LLM Service] Session connected: ${self.sessionId}`);
-        check caller->writeMessage("READY");
     }
 
     remote function onTextMessage(websocket:Caller caller, string userText) returns error? {
@@ -237,13 +238,11 @@ service class LLMService {
         string|error agentResponse = agent.run(userText, self.sessionId);
         if agentResponse is error {
             io:println(string `[LLM Service] Agent error: ${agentResponse.message()}`);
-            check caller->writeMessage("ERROR:Agent failed to process request");
-            check caller->writeMessage("END");
+            check caller->close(1011, "Agent failed to process request");
             return;
         }
 
         check caller->writeMessage(agentResponse);
-        check caller->writeMessage("END");
     }
 
     remote function onClose(websocket:Caller caller, int statusCode, string reason) {

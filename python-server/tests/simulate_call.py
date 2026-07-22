@@ -156,12 +156,16 @@ async def main():
     num_plays = 7
     play_interval = 20
 
-
+    loop = asyncio.get_running_loop()
 
     for play_idx in range(num_plays):
         print(f"Starting audio stream (Play {play_idx + 1}/{num_plays}): Playing file...")
-        
-        with wave.open(AUDIO_FILE, "rb") as wf:
+
+        # wave's file open/read are blocking calls; run them in the default
+        # executor so they don't stall the event loop (and the capture_frame /
+        # sleep timing below) while disk I/O happens.
+        wf = await loop.run_in_executor(None, wave.open, AUDIO_FILE, "rb")
+        try:
             # Check wave file properties
             n_channels = wf.getnchannels()
             samp_width = wf.getsampwidth()
@@ -169,13 +173,13 @@ async def main():
             print(f"Audio info: {n_channels} channels, {samp_width} bytes/sample, {framerate}Hz")
 
             chunk_samples = int(16000 * 0.02)  # 20ms frame blocks = 320 samples
-            
+
             while True:
-                data = wf.readframes(chunk_samples)
+                data = await loop.run_in_executor(None, wf.readframes, chunk_samples)
                 if not data:
                     print(f"Audio track (Play {play_idx + 1}/{num_plays}) completed streaming.")
                     break
-                
+
                 # For 16-bit mono, 2 bytes per sample
                 actual_samples = len(data) // 2
                 if actual_samples == 0:
@@ -187,7 +191,9 @@ async def main():
                 # Sleep one frame's worth (20ms) so audio is sent at real-time
                 # speed rather than dumped all at once, mimicking a live mic.
                 await asyncio.sleep(0.02)
-        
+        finally:
+            wf.close()
+
         if play_idx < num_plays - 1:
             print(f"Waiting {play_interval}s before next playback...")
             await asyncio.sleep(play_interval)
