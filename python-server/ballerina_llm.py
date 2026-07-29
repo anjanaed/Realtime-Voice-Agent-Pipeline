@@ -49,11 +49,11 @@ def _split_sentences(text: str) -> list[str]:
 class IntegratorAgent(llm.LLM):
     """LiveKit LLM that proxies turns to the Ballerina agent over a WebSocket.
 
-    Wire protocol (see bal-agent/main.bal for the server side):
-      1. On connect the server sends a single "READY" message (handshake).
-      2. The client sends the user's transcript as one text message.
-      3. The server streams back the answer as text, then a final "END" marker.
-         Failures arrive as a single "ERROR:<message>" message.
+    Wire protocol (served by the wso2/voice listener, see bal-agent/main.bal):
+      1. The client sends the user's transcript as one text message.
+      2. The server replies with the whole answer as one text message. The
+         message boundary terminates the response, so there is no end marker.
+         A failure closes the connection with a non-1000 code and a reason.
 
     One WebSocket is held open per session_id and reused across turns so the
     Ballerina side keeps that conversation's memory/context.
@@ -95,7 +95,6 @@ class IntegratorAgent(llm.LLM):
                     ping_interval=20,
                     ping_timeout=10,
                 )
-                await self._ws.recv()  # consume the server's "READY" handshake
             return self._ws
 
     async def _close_ws(self) -> None:
@@ -160,18 +159,11 @@ class IntegratorAgentStream(llm.LLMStream):
         try:
             await ws.send(user_text)
             message_id = utils.shortuuid("bal_")
-            full_content = ""
 
-            while True:
-                raw = await ws.recv()
-                if not isinstance(raw, str):
-                    continue
-                if raw == "END":
-                    break
-                if raw.startswith("ERROR:"):
-                    await self._ballerina._close_ws()
-                    raise APIConnectionError(raw[len("ERROR:"):])
-                full_content += raw
+            # One reply per turn: the server writes the whole answer as a single
+            # message, so the first message read is the complete response.
+            raw = await ws.recv()
+            full_content = raw if isinstance(raw, str) else raw.decode("utf-8", "replace")
 
             response_complete = True
 
@@ -197,6 +189,14 @@ class IntegratorAgentStream(llm.LLMStream):
             if not response_complete:
                 await self._ballerina._close_ws()
             raise
-        except (websockets.ConnectionClosed, OSError) as e:
+        except websockets.ConnectionClosed as e:
+            # A handler failure on the server side arrives as a non-1000 close
+            # carrying the reason, so report that rather than the raw exception.
+            await self._ballerina._close_ws()
+            rcvd = e.rcvd
+            if rcvd is not None and rcvd.code != 1000:
+                raise APIConnectionError(rcvd.reason or f"agent closed with {rcvd.code}") from e
+            raise APIConnectionError(f"WebSocket closed: {e}") from e
+        except OSError as e:
             await self._ballerina._close_ws()
             raise APIConnectionError(f"WebSocket error: {e}") from e

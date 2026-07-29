@@ -1,10 +1,9 @@
 import ballerina/ai;
 import ballerina/http;
-import ballerina/io;
+import ballerina/log;
 import ballerina/time;
-import ballerina/uuid;
-import ballerina/websocket;
 import ballerinax/ai.openai;
+import voice_agent/llm_service.voice;
 
 configurable string openaiToken = ?;
 configurable openai:OPEN_AI_MODEL_NAMES openaiModel = openai:GPT_4O_MINI;
@@ -194,73 +193,15 @@ If a search returns no results, say so and suggest checking docs.wso2.com direct
     model: modelProvider
 });
 
-// WebSocket entry point for the voice pipeline. maxFrameSize is 100 MB
-// (104857600 bytes) to comfortably accommodate large prompts or replies.
-@websocket:ServiceConfig {
-    maxFrameSize: 104857600
-}
-service /llm on new websocket:Listener(8003) {
+// WebSocket entry point for the voice pipeline. The listener owns the upgrade
+// handshake, the session identifier and error reporting; a returned error is
+// turned into a non-1000 close that the pipeline surfaces instead of speaking.
+service /llm on new voice:Listener(8003) {
 
-    resource function get .(http:Request req) returns websocket:Service|websocket:UpgradeError {
-        string sessionId = req.getQueryParamValue("sessionId") ?: uuid:createRandomUuid();
-        LLMService|error svc = new (sessionId);
-        if svc is error {
-            return error websocket:UpgradeError("Failed to create agent: " + svc.message());
-        }
-        return svc;
+    // request.sessionId keys the agent's conversation memory, so context is
+    // retained across the turns of one connection.
+    remote function onChatMessage(voice:ChatRequest request) returns string|error {
+        log:printInfo("chat turn", sessionId = request.sessionId, chars = request.message.length());
+        return agent.run(request.message, request.sessionId);
     }
-}
-
-// One instance per WebSocket connection. The voice pipeline sends the user's
-// text as a single message and expects the reply as a single message: the
-// WebSocket message boundary terminates the response, so there is no end marker
-// to send. A failure is reported by closing the connection with a non-1000 code
-// and a reason, which the pipeline surfaces instead of speaking.
-service class LLMService {
-    *websocket:Service;
-
-    private final string sessionId;
-
-    function init(string sessionId) returns error? {
-        self.sessionId = sessionId;
-    }
-
-    remote function onOpen(websocket:Caller caller) returns error? {
-        _ = caller;
-        io:println(string `[LLM Service] Session connected: ${self.sessionId}`);
-    }
-
-    remote function onTextMessage(websocket:Caller caller, string userText) returns error? {
-        io:println(string `[LLM Service] Session ${self.sessionId}: Received text (${userText.length()} chars): ${userText}`);
-
-        // sessionId keys the agent's conversation memory, so context is
-        // retained across turns on the same connection.
-        string|error agentResponse = agent.run(userText, self.sessionId);
-        if agentResponse is error {
-            io:println(string `[LLM Service] Agent error: ${agentResponse.message()}`);
-            check caller->close(1011, "Agent failed to process request");
-            return;
-        }
-
-        check caller->writeMessage(agentResponse);
-    }
-
-    remote function onClose(websocket:Caller caller, int statusCode, string reason) {
-        _ = caller;
-        _ = statusCode;
-        _ = reason;
-        io:println(string `[LLM Service] Session disconnected: ${self.sessionId}`);
-    }
-
-    remote function onError(websocket:Caller caller, error err) {
-        _ = caller;
-        io:println(string `[LLM Service] Error: ${err.message()}`);
-    }
-}
-
-public function main() returns error? {
-    io:println("===============================================");
-    io:println("WSO2 Expert Assistant - Ballerina LLM Service");
-    io:println("WebSocket server listening on ws://localhost:8003/llm");
-    io:println("===============================================");
 }
