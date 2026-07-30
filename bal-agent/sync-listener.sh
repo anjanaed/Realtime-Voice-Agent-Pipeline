@@ -20,10 +20,13 @@ if [[ ! -d "$src" ]]; then
     exit 1
 fi
 
+# Source only -- deliberately NOT tests/. Devant's build pipeline runs a unit
+# test phase (`bal test`) over this package, and the listener's tests bind a real
+# port and pull ballerina/test into the deploy-time resolution graph. They stay
+# in "../WS Listener", where `bal test` is the right place to run them.
 rm -rf "$dest"
 mkdir -p "$dest"
 cp "$src/listener.bal" "$src/connection.bal" "$src/types.bal" "$dest/"
-cp -r "$src/tests" "$dest/"
 
 echo "synced modules/voice from ../WS Listener"
 if git -C "$src" rev-parse --short HEAD >/dev/null 2>&1; then
