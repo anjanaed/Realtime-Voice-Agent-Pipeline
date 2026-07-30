@@ -200,8 +200,21 @@ service /llm on new voice:Listener(8003) {
 
     // request.sessionId keys the agent's conversation memory, so context is
     // retained across the turns of one connection.
+    //
+    // Both directions are logged with their full text. That puts caller speech
+    // and the agent's replies in the component log, which is what you want while
+    // diagnosing the pipeline and not what you want long term -- drop back to
+    // lengths once the traffic looks right.
     remote function onChatMessage(voice:ChatRequest request) returns string|error {
-        log:printInfo("chat turn", sessionId = request.sessionId, chars = request.message.length());
-        return agent.run(request.message, request.sessionId);
+        voice:ChatMessage[] history = request?.history ?: [];
+        // `message` is rejected as a log key -- it collides with the `message=`
+        // field the logger emits for the log line's own text.
+        log:printInfo("turn in", sessionId = request.sessionId, userText = request.message,
+                historyTurns = history.length());
+
+        string reply = check agent.run(request.message, request.sessionId);
+
+        log:printInfo("turn out", sessionId = request.sessionId, reply = reply);
+        return reply;
     }
 }
